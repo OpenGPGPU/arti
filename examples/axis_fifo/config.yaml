@@ -1,0 +1,15 @@
+project:
+  name: axis_fifo_cosim
+
+rtl:
+  top_module: axis_fifo
+  source_files: [axis_fifo.v]
+  clk_freq_mhz: 100
+
+bridge:
+  protocol: auto
+  base_address: "0x0B00_0000"
+  data_width: 32
+
+advanced:
+  timeout_cycles: 1000

@@ -1,0 +1,15 @@
+project:
+  name: axi4_periph_cosim
+
+rtl:
+  top_module: axi4_periph
+  source_files: [axi4_periph.v]
+  clk_freq_mhz: 100
+
+bridge:
+  protocol: auto
+  base_address: "0x0B00_0000"
+  data_width: 32
+
+advanced:
+  timeout_cycles: 1000

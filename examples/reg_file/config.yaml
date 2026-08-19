@@ -1,0 +1,15 @@
+project:
+  name: reg_file_cosim
+
+rtl:
+  top_module: reg_file
+  source_files: [reg_file.v]
+  clk_freq_mhz: 100
+
+bridge:
+  protocol: auto
+  base_address: "0x0B00_0000"
+  data_width: 32
+
+advanced:
+  timeout_cycles: 1000
