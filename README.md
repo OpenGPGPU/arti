@@ -156,14 +156,26 @@ display:
   framebuffer_size: 0x800000
 ```
 
-One-click environment with display enabled:
+`ARTI_DISPLAY=1` enables the framebuffer device in the embedded QEMU model. It is read
+while the model is generated (during `setup_env.sh` or `build_embedded_qemu.sh`), not at
+runtime. If you have already built the model without display support, rerun the setup with
+`ARTI_DISPLAY=1` to regenerate it.
+
+The `test` and `interactive` modes of `run.sh` always run with `-display none` and exit
+after the test or shell session, so `ARTI_DISPLAY` alone does not open a graphics window.
+To see the framebuffer, boot the Debian environment and set a QEMU UI backend:
 
 ```bash
-ARTI_DISPLAY=1 ./examples/linux_arti_driver/run.sh
+# macOS
+ARTI_DISPLAY=1 QEMU_DISPLAY=cocoa ./examples/linux_arti_driver/run.sh debian
+
+# Linux
+ARTI_DISPLAY=1 QEMU_DISPLAY=gtk ./examples/linux_arti_driver/run.sh debian
 ```
 
-The Debian environment opens a QEMU graphics window by default (Cocoa on macOS); you can
-override this with `QEMU_DISPLAY`, for example `QEMU_DISPLAY=none` to run headless:
+The Debian environment opens a QEMU graphics window by default (Cocoa on macOS, GTK on
+Linux); you can override this with `QEMU_DISPLAY`, for example `QEMU_DISPLAY=none` to run
+headless:
 
 ```bash
 QEMU_DISPLAY=cocoa ./examples/linux_arti_driver/run.sh debian
