@@ -1,19 +1,19 @@
 # ARTI
 
-ARTI is the initial implementation of the automatic RTL-to-QEMU integration
-framework described in `design_report.md`. The current M1 slice
-parses ANSI-style Verilog top-level ports, ranks five standard bus protocols
-(AXI-Lite, AXI4, AHB, APB, and AXI-Stream), and generates both a
-SystemC/Verilator co-simulation project and an embedded QEMU device model for
-the inferred protocol. With an RTL design as the input, users can quickly run
-full-system simulation or functional trials: the generated RTL model can be
-integrated into QEMU as an `arti-rtl` SysBus device; in embedded mode, Verilated
-RTL is compiled directly into QEMU so a Linux guest can exercise the RTL through
-MMIO without an external cosim process or Unix socket.
+ARTI is an initial implementation of the automatic RTL-to-QEMU integration framework
+described in `design_report.md`. The current M1 milestone parses ANSI-style Verilog
+top-level ports, ranks five standard bus protocols (AXI-Lite, AXI4, AHB, APB, and
+AXI-Stream), and generates both a SystemC/Verilator co-simulation project and an
+embedded QEMU device model for the inferred protocol. Given an RTL design as input,
+users can quickly run full-system simulation or functional tests: the generated RTL
+model can be integrated into QEMU as an `arti-rtl` SysBus device; in embedded mode,
+Verilated RTL is compiled directly into QEMU so a Linux guest can exercise the RTL
+through MMIO without an external cosim process or Unix socket.
 
 ## Quick start (one-click)
 
-Install all dependencies and run the examples in one shot (suitable for a fresh environment):
+Install all dependencies and run the examples in one step (suitable for a fresh
+environment):
 
 ```bash
 # Install environment + run end-to-end test
@@ -36,15 +36,17 @@ Install all dependencies and run the examples in one shot (suitable for a fresh 
 6. Build the driver module `.ko`
 7. Generate the embedded RTL model and compile it into QEMU
 
-You can also run `setup_env.sh` on its own to only perform the installation:
+You can also run `setup_env.sh` on its own to perform only the installation:
 
 ```bash
 ./examples/linux_arti_driver/setup_env.sh
 ```
 
-After installation, all artifacts live under `/tmp`; the run scripts automatically detect already-installed components (re-running only fills in missing items).
-`setup_env.sh` automatically picks the package manager for the current OS to install missing dependencies: Homebrew on macOS
-(including the AArch64 Linux cross-toolchain tap), and apt/dnf/yum/pacman/zypper/apk on Linux.
+After installation, all artifacts are placed under `/tmp`. The run scripts automatically
+detect already-installed components and only install what is missing. `setup_env.sh`
+automatically selects the package manager for the current OS to install missing
+dependencies: Homebrew on macOS (including the AArch64 Linux cross-toolchain tap), and
+apt/dnf/yum/pacman/zypper/apk on Linux.
 
 ## Quick start
 
@@ -67,7 +69,9 @@ Run the framework tests with:
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-For the full Linux kernel driver end-to-end test (guest `insmod` -> MMIO -> QEMU -> RTL loopback), see [section 5](#5-linux-kernel-driver-end-to-end-test). Quick run after prerequisites are built:
+For the full Linux kernel driver end-to-end test (guest `insmod` -> MMIO -> QEMU -> RTL
+loopback), see [section 5](#5-linux-kernel-driver-end-to-end-test). Quick run after
+prerequisites are built:
 
 ```bash
 examples/linux_arti_driver/run_linux_test.sh
@@ -78,8 +82,10 @@ examples/linux_arti_driver/run_linux_test.sh
 - Verilog-2001 ANSI port declarations and integer parameters
 - Naming-based AXI-Lite, AXI4, AXI-Stream, AHB, and APB protocol detection
 - Confidence, missing-signal, unknown-port, signal-mapping, and interrupt reports
-- **Full multi-protocol embedded model generation** for AXI-Lite, AXI4, APB, AHB, and AXI-Stream
-- **Automatic interrupt support**: detects IRQ output ports, generates `arti_rtl_model_check_irq()` API, and wires QEMU SysBus IRQ with polling timer
+- **Full multi-protocol embedded model generation** for AXI-Lite, AXI4, APB, AHB, and
+  AXI-Stream
+- **Automatic interrupt support**: detects IRQ output ports, generates
+  `arti_rtl_model_check_irq()` API, and wires QEMU SysBus IRQ with polling timer
 - SystemC/Verilator AXI-Lite runtime bridge with generated local TLM self-test (local mode)
 - Upstream QEMU SysBus MMIO stub and Unix-socket-to-TLM transport generation
 - Full QEMU embedded mode: Verilated RTL compiled directly into QEMU, no IPC needed
@@ -91,7 +97,9 @@ A successful generated simulation prints `ARTI COSIM PASS`.
 
 ### Environment preparation
 
-Python uses only the standard library. Regular simulation requires Verilator, SystemC, CMake, and a C++ compiler; QEMU co-simulation additionally requires the official AArch64 GNU cross-compiler:
+Python uses only the standard library. Regular simulation requires Verilator, SystemC,
+CMake, and a C++ compiler; QEMU co-simulation additionally requires the official AArch64
+GNU cross-compiler:
 
 ```bash
 verilator --version
@@ -102,7 +110,8 @@ meson --version
 pkg-config --exists glib-2.0 pixman-1 && echo "QEMU build deps OK"
 ```
 
-If the cross-compiler is missing, `setup_env.sh` installs it automatically; you can also install it manually per platform:
+If the cross-compiler is missing, `setup_env.sh` installs it automatically; you can also
+install it manually per platform:
 
 ```bash
 # macOS
@@ -122,18 +131,20 @@ sudo pacman -S --needed aarch64-linux-gnu-gcc
 sudo zypper --non-interactive install cross-aarch64-gcc
 ```
 
-After installation on macOS the command is named `aarch64-unknown-linux-gnu-gcc`; `setup_env.sh` and
-`run_linux_test.sh` automatically detect it and set the corresponding `CROSS_COMPILE` prefix. On macOS,
-`setup_env.sh` also automatically installs the GNU toolchain and `bee-headers` (which provide the
-`elf.h` / `byteswap.h` / `endian.h` headers needed for host-side Linux kernel builds).
+After installation on macOS the command is named `aarch64-unknown-linux-gnu-gcc`;
+`setup_env.sh` and `run_linux_test.sh` automatically detect it and set the correct
+`CROSS_COMPILE` prefix. On macOS, `setup_env.sh` also automatically installs the GNU
+toolchain and `bee-headers` (which provide the `elf.h` / `byteswap.h` / `endian.h`
+headers needed for host-side Linux kernel builds).
 
 ### Generic framebuffer display extension
 
-After adding a `display` section to the config, the generated `arti-rtl.c` includes `GraphicHwOps` and exposes a
-guest-writable framebuffer. The display device is at `0x0B000000`, the framebuffer defaults to
-`0x0B100000`, and the format is 32bpp `a8r8g8b8`. ARTI also automatically adds a
-`/framebuffer` node (`simple-framebuffer`) to the virt device tree, so with
-`CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` enabled, Linux can use it as the boot display.
+After adding a `display` section to the config, the generated `arti-rtl.c` includes
+`GraphicHwOps` and exposes a guest-writable framebuffer. The display device is at
+`0x0B000000`, the framebuffer defaults to `0x0B100000`, and the format is 32bpp
+`a8r8g8b8`. ARTI also automatically adds a `/framebuffer` node (`simple-framebuffer`) to
+the virt device tree, so with `CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` enabled,
+Linux can use it as the boot display.
 
 ```yaml
 display:
@@ -151,8 +162,8 @@ One-click environment with display enabled:
 ARTI_DISPLAY=1 ./examples/linux_arti_driver/run.sh
 ```
 
-The Debian environment opens a QEMU graphics window by default (Cocoa on macOS); you can override this with `QEMU_DISPLAY`,
-for example `QEMU_DISPLAY=none` to keep running headless:
+The Debian environment opens a QEMU graphics window by default (Cocoa on macOS); you can
+override this with `QEMU_DISPLAY`, for example `QEMU_DISPLAY=none` to run headless:
 
 ```bash
 QEMU_DISPLAY=cocoa ./examples/linux_arti_driver/run.sh debian
@@ -166,7 +177,9 @@ PYTHONPATH=src python3 -m arti.cli generate \
   examples/simple_fb/config.yaml --output /tmp/simple_fb
 ```
 
-The upstream QEMU source directory is specified by the `$QEMU_SRC` environment variable; the built QEMU is located at `/tmp/qemu-arti-build/qemu-system-aarch64`. After setting the variable, rebuild:
+The upstream QEMU source directory is specified by the `$QEMU_SRC` environment variable;
+the built QEMU binary is at `/tmp/qemu-arti-build/qemu-system-aarch64`. After setting
+the variable, rebuild:
 
 ```bash
 export QEMU_SRC=${QEMU_SRC:-$(pwd)/../qemu}
@@ -183,7 +196,8 @@ PATH=/tmp/qemu-build-tools/bin:$PATH ninja -C /tmp/qemu-arti-build qemu-system-a
 PYTHONPATH=src python3 -m arti.cli inspect examples/simple_gpio/simple_gpio.v --top simple_gpio
 ```
 
-Outputs JSON containing the port signature, protocol inference, signal mapping, missing signals, and unknown ports.
+Outputs JSON containing the port signature, protocol inference, signal mapping, missing
+signals, and unknown ports.
 
 ### 2. Local SystemC/Verilator simulation
 
@@ -193,11 +207,16 @@ PYTHONPATH=src python3 -m arti.cli generate \
 /tmp/simple_gpio_cosim/build/run_cosim.sh
 ```
 
-On success it prints `ARTI COSIM PASS`. In the generated directory, `bridge/bridge_top.h` is the AXI-Lite TLM-to-RTL bridge, and `reports/inference_report.json` is the inference report.
+On success it prints `ARTI COSIM PASS`. In the generated directory,
+`bridge/bridge_top.h` is the AXI-Lite TLM-to-RTL bridge, and
+`reports/inference_report.json` is the inference report.
 
 ### 3. Upstream QEMU SysBus co-simulation (socket mode)
 
-> **Tip**: to test the driver in the Linux kernel, the embedded mode described in [section 5](#5-linux-kernel-driver-end-to-end-test) is recommended (RTL compiled directly into QEMU), with no cosim process or socket needed. This section describes socket mode, which is suitable for scenarios that require cycle-accurate SystemC simulation.
+> **Tip**: to test the driver in the Linux kernel, the embedded mode described in
+> [section 5](#5-linux-kernel-driver-end-to-end-test) is recommended (RTL compiled
+> directly into QEMU), with no cosim process or socket needed. This section describes
+> socket mode, which is suitable when cycle-accurate SystemC simulation is required.
 
 ARTI does not depend on PCI, VFIO, Xilinx QEMU, or remote-port; the data path is:
 
@@ -274,9 +293,11 @@ aarch64-linux-gnu-ld -T /tmp/arti-aarch64/link.ld /tmp/arti-aarch64/start.o /tmp
 
 ### 5. Linux kernel driver end-to-end test
 
-This section verifies the full chain: a real Linux kernel loads the `arti_rtl_test.ko` driver, whose probe function writes data to the RTL device over MMIO and reads it back.
+This section verifies the full chain: a real Linux kernel loads the `arti_rtl_test.ko`
+driver, whose probe function writes data to the RTL device over MMIO and reads it back.
 
-The RTL model (Verilated `simple_gpio`) is compiled directly into the QEMU device — **no external cosim process or Unix socket is needed**:
+The RTL model (Verilated `simple_gpio`) is compiled directly into the QEMU device — **no
+external cosim process or Unix socket is needed**:
 
 ```text
 Linux guest insmod arti_rtl_test.ko
@@ -290,14 +311,17 @@ Files involved (all under `examples/linux_arti_driver/`):
 
 - `arti_rtl_test.c` — platform driver with write+read verification in probe
 - `arti-linux-init.c` — static init program: mount + finit_module + poweroff
-- `build_embedded_qemu.sh` — one-click script to generate the embedded model and rebuild QEMU (supports any AXI-Lite RTL)
+- `build_embedded_qemu.sh` — one-click script to generate the embedded model and rebuild
+  QEMU (supports any AXI-Lite RTL)
 - `run_linux_test.sh` — one-click test script
 
-`arti_rtl_model.cpp` and `arti_rtl_model.h` are generated automatically by the arti framework from the RTL; no hand-writing is needed.
+`arti_rtl_model.cpp` and `arti_rtl_model.h` are generated automatically by the arti
+framework from the RTL; no hand-writing is needed.
 
 #### 5.0 Prerequisites
 
-This section uses the following environment variables for source paths; set them according to your actual locations:
+This section uses the following environment variables for source paths; set them
+according to your actual locations:
 
 ```bash
 export ARTI_DIR=${ARTI_DIR:-$(pwd)}            # ARTI project root directory
@@ -323,8 +347,9 @@ test -f "$LINUX_SRC"/Makefile && echo "linux tree OK"
 
 #### 5.1 Build the embedded QEMU (with the Verilated RTL model)
 
-The arti framework automatically generates a C++ wrapper (`arti_rtl_model.cpp`) from the RTL that drives the AXI-Lite handshake.
-Any AXI-Lite RTL module is supported — port names, address width, and data width are all adapted automatically.
+The arti framework automatically generates a C++ wrapper (`arti_rtl_model.cpp`) from the
+RTL that drives the AXI-Lite handshake. Any AXI-Lite RTL module is supported — port
+names, address width, and data width are all adapted automatically.
 
 **5.1.1 One-click build (supports any RTL):**
 
@@ -339,7 +364,8 @@ RTL=examples/reg_file/reg_file.v TOP=reg_file \
 ```
 
 The script automatically:
-1. Uses the arti CLI to parse the RTL → infer the AXI-Lite protocol → generate the port mapping → generate the C++ wrapper
+1. Uses the arti CLI to parse the RTL -> infer the AXI-Lite protocol -> generate the
+   port mapping -> generate the C++ wrapper
 2. Uses Verilator to compile the RTL into a C++ model
 3. Compiles `V*.cpp` + `verilated.cpp` + `arti_rtl_model.cpp` into `libarti_rtl_model.a`
 4. Installs it into `$QEMU_SRC/hw/misc/` and rebuilds QEMU with ninja
@@ -395,7 +421,7 @@ Confirm the `.ko` is generated and that vermagic matches the kernel:
 ls -lh examples/linux_arti_driver/arti_rtl_test.ko
 strings examples/linux_arti_driver/arti_rtl_test.ko | grep vermagic
 # Should output: vermagic=7.2.0-rc6-... SMP preempt aarch64
-# corresponding to the contents of kernel.release
+# matching the contents of kernel.release
 ```
 
 #### 5.4 Run the end-to-end test in one click
@@ -409,12 +435,14 @@ examples/linux_arti_driver/run_linux_test.sh
 
 The script automatically performs the following steps:
 
-1. Compiles `arti-linux-init.c` with `aarch64-linux-gnu-gcc` into a static ARM64 init
+1. Compiles `arti-linux-init.c` with `aarch64-linux-gnu-gcc` into a static AArch64 init program
 2. Packages init + the `.ko` into an initramfs (cpio.gz)
-3. Boots QEMU with the kernel Image + initramfs; the guest automatically runs `insmod` and verifies MMIO
+3. Boots QEMU with the kernel Image + initramfs; the guest automatically runs `insmod`
+   and verifies MMIO
 4. Checks the output after a 30-second timeout
 
-**No external cosim process needs to be started** — the Verilated model embedded in QEMU handles MMIO requests directly.
+**No external cosim process needs to be started** — the Verilated model embedded in QEMU
+handles MMIO requests directly.
 
 On success it prints:
 
@@ -448,12 +476,14 @@ Start QEMU directly, without any extra processes or parameters:
   -append "console=ttyAMA0"
 ```
 
-Note: in embedded mode the `-chardev socket` parameter is no longer needed. The MMIO address is `0x0B000000`, with a window size of `0x1000`.
+Note: in embedded mode the `-chardev socket` parameter is no longer needed. The MMIO
+address is `0x0B000000`, with a window size of `0x1000`.
 
 
 ### 5.6 Full Debian development environment (with network)
 
-If you need a real, usable Linux environment (systemd, apt, gcc, etc.), you can boot a full Debian rootfs:
+If you need a real, usable Linux environment (systemd, apt, gcc, etc.), you can boot a
+full Debian rootfs:
 
 ```bash
 ./examples/linux_arti_driver/run_debian.sh
@@ -467,13 +497,19 @@ Features:
 - ARTI embedded device at MMIO `0x0B000000`
 - To exit: run `poweroff -f` inside the VM, or press `Ctrl+A` then `X`
 
-Network configuration is done automatically via cloud-init: on first boot an `arti-net.service` (systemd oneshot) is created to configure the SLIRP static IP (`10.0.2.15/24`, gateway `10.0.2.2`, DNS `10.0.2.3`). It takes effect automatically on every subsequent boot, with no DHCP needed.
+Network configuration is applied automatically via cloud-init: on first boot an
+`arti-net.service` (systemd oneshot) is created to configure the SLIRP static IP
+(`10.0.2.15/24`, gateway `10.0.2.2`, DNS `10.0.2.3`). The service is enabled and runs on
+every subsequent boot, so no DHCP is needed.
 
-The cloud-init ISO is generated automatically by `build_cloudinit.sh` (on first boot `run_debian.sh` detects it and builds it automatically); it embeds the `.ko` module and the network service configuration.
+The cloud-init ISO is generated automatically by `build_cloudinit.sh` (on first boot
+`run_debian.sh` detects it and builds it automatically); it embeds the `.ko` module and
+the network service configuration.
 
 #### Prerequisite: the kernel must include the virtio-net driver
 
-The default kernel configuration does not enable the network device subsystem. Enable it manually:
+The default kernel configuration does not enable the network device subsystem. Enable it
+manually:
 
 ```bash
 cd "$LINUX_SRC"
@@ -506,23 +542,28 @@ ninja -C /tmp/qemu-arti-build qemu-system-aarch64
 /tmp/qemu-arti-build/qemu-system-aarch64 -machine virt -netdev help 2>&1 | grep user
 ```
 
-> Note: meson's pkg-config probing **overrides** the `PKG_CONFIG_PATH` environment variable with the `pkg_config_path` property from the machine file.
-> If there is no native machine file, that property is empty, which causes slirp not to be found.
-> The solution is to set the built-in option directly with `meson configure -Dpkg_config_path=...`.
+> Note: meson's pkg-config probing **overrides** the `PKG_CONFIG_PATH` environment
+> variable with the `pkg_config_path` property from the machine file. If there is no
+> native machine file, that property is empty, which causes slirp not to be found.
+> The solution is to set the built-in option directly with
+> `meson configure -Dpkg_config_path=...`.
 
 ### 5.7 Supported bus protocols and interrupts
 
-ARTI automatically detects the following 5 bus protocols and generates the corresponding embedded model code:
+ARTI automatically detects the following 5 bus protocols and generates the matching
+embedded model code:
 
 | Protocol | Detection signals | Status |
 |------|---------|------|
-| AXI-Lite | AWADDR/AWVALID/WDATA/BRESP/ARADDR/RDATA etc. | Full support |
-| AXI4 | Burst signals including AWLEN/AWSIZE/AWBURST/WLAST/ARLEN/RLAST etc. | Full support |
-| APB | PADDR/PWDATA/PRDATA/PWRITE/PSEL/PENABLE/PREADY | Full support |
-| AHB | HADDR/HWDATA/HRDATA/HWRITE/HTRANS/HREADY | Full support |
-| AXI-Stream | TDATA/TVALID/TREADY (TLAST/TKEEP etc. optional) | Full support |
+| AXI-Lite | AWADDR/AWVALID/WDATA/BRESP/ARADDR/RDATA etc. | Supported |
+| AXI4 | Burst signals including AWLEN/AWSIZE/AWBURST/WLAST/ARLEN/RLAST etc. | Supported |
+| APB | PADDR/PWDATA/PRDATA/PWRITE/PSEL/PENABLE/PREADY | Supported |
+| AHB | HADDR/HWDATA/HRDATA/HWRITE/HTRANS/HREADY | Supported |
+| AXI-Stream | TDATA/TVALID/TREADY (TLAST/TKEEP etc. optional) | Supported |
 
-**Automatic protocol detection**: no need to specify the protocol in config.yaml (just set `protocol: auto`). The framework matches the best protocol based on port names and outputs a confidence report.
+**Automatic protocol detection**: no need to specify the protocol in config.yaml (just
+set `protocol: auto`). The framework matches the best protocol based on port names and
+outputs a confidence report.
 
 **Switching RTL only requires changing the config file**:
 
@@ -539,14 +580,21 @@ arti generate examples/ahb_gpio/config.yaml --output /tmp/ahb_project
 
 #### Automatic interrupt support
 
-If the RTL has interrupt output ports (port names matching patterns such as `irq`, `interrupt`, `intr`, `int`), the framework automatically:
+If the RTL has interrupt output ports (port names matching patterns such as `irq`,
+`interrupt`, `intr`, `int`), the framework automatically:
 
-1. **Detects interrupt ports**: via the `_detect_interrupts()` function in `inference.py`, automatically identifying interrupt signals among 1-bit output ports
-2. **Generates the IRQ check API**: generates the `arti_rtl_model_check_irq(unsigned index)` function in `arti_rtl_model.h`
-3. **Registers the QEMU SysBus IRQ**: calls `sysbus_init_irq()` in `arti-rtl.c` to register the IRQ output
-4. **Polls interrupt status**: creates a `QEMUTimer` with a 100μs period, sending interrupts to the guest via `qemu_set_irq()`
+1. **Detects interrupt ports**: via the `_detect_interrupts()` function in `inference.py`,
+   automatically identifying interrupt signals among 1-bit output ports
+2. **Generates the IRQ check API**: generates the `arti_rtl_model_check_irq(unsigned index)`
+   function in `arti_rtl_model.h`
+3. **Registers the QEMU SysBus IRQ**: calls `sysbus_init_irq()` in `arti-rtl.c` to register
+   the IRQ output
+4. **Polls interrupt status**: creates a `QEMUTimer` with a 100μs period, sending
+   interrupts to the guest via `qemu_set_irq()`
 
-The example RTL (`examples/irq_timer/`) demonstrates an AXI-Lite timer with an interrupt output; the framework automatically detects the `irq` port and generates complete interrupt support code.
+The example RTL (`examples/irq_timer/`) demonstrates an AXI-Lite timer with an interrupt
+output; the framework automatically detects the `irq` port and generates complete
+interrupt support code.
 
 ```bash
 # View the interrupt detection result
@@ -567,12 +615,21 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 #### General issues
 
-- Exits immediately after `ARTI COSIM PASS`: this is the local-mode self-test (`mode: local`); the Linux driver test uses embedded mode and does not need the cosim.
-- No `ARTI LINUX PASS`: confirm the guest accesses `0x0B000000` and that you are using the QEMU built by this project (with the embedded Verilated model).
+- Exits immediately after `ARTI COSIM PASS`: this is the local-mode self-test
+  (`mode: local`); the Linux driver test uses embedded mode and does not need the cosim.
+- No `ARTI LINUX PASS`: confirm the guest accesses `0x0B000000` and that you are using the
+  QEMU built by this project (with the embedded Verilated model).
 
 #### Linux driver test issues
 
-- **`insmod` fails / vermagic mismatch**: the `.ko` must be built with the same source tree and compiler as the kernel Image. Confirm the output of `strings arti_rtl_test.ko | grep vermagic` matches `cat /tmp/arti-linux-build/include/config/kernel.release`.
-- **`finit_module` returns non-zero**: check the dmesg output. Common causes are a vermagic mismatch or module loading not enabled in the kernel (`CONFIG_MODULES=y`).
-- **No output after QEMU starts**: confirm the QEMU in use is the version built by this project (`/tmp/qemu-arti-build/qemu-system-aarch64`) and that `libarti_rtl_model.a` has been installed into `$QEMU_SRC/hw/misc/`. Re-run `build_embedded_qemu.sh` to rebuild.
-- **Link error `undefined reference to VerilatedContext`**: the static library does not include `verilated.o` and `verilated_threads.o`. Re-run `build_embedded_qemu.sh`.
+- **`insmod` fails / vermagic mismatch**: the `.ko` must be built with the same source
+  tree and compiler as the kernel Image. Confirm the output of
+  `strings arti_rtl_test.ko | grep vermagic` matches
+  `cat /tmp/arti-linux-build/include/config/kernel.release`.
+- **`finit_module` returns non-zero**: check the dmesg output. Common causes are a
+  vermagic mismatch or module loading not enabled in the kernel (`CONFIG_MODULES=y`).
+- **No output after QEMU starts**: confirm the QEMU in use is the version built by this
+  project (`/tmp/qemu-arti-build/qemu-system-aarch64`) and that `libarti_rtl_model.a` has
+  been installed into `$QEMU_SRC/hw/misc/`. Re-run `build_embedded_qemu.sh` to rebuild.
+- **Link error `undefined reference to VerilatedContext`**: the static library does not
+  include `verilated.o` and `verilated_threads.o`. Re-run `build_embedded_qemu.sh`.
