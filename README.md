@@ -1,7 +1,7 @@
 # ARTI
 
 ARTI is the initial implementation of the automatic RTL-to-QEMU integration
-framework described in `自动化通用RTL接入框架设计报告.md`. The current M1 slice
+framework described in `design_report.md`. The current M1 slice
 parses ANSI-style Verilog top-level ports, ranks five standard bus protocols, and
 generates a SystemC/Verilator project for an AXI-Lite target. With an RTL design
 as the input, users can quickly run full-system simulation or functional trials:
@@ -12,38 +12,38 @@ or Unix socket.
 
 ## Quick start (one-click)
 
-一键安装全部依赖并运行示例（适合新环境）：
+Install all dependencies and run the examples in one shot (suitable for a fresh environment):
 
 ```bash
-# 安装环境 + 运行端到端测试
+# Install environment + run end-to-end test
 ./examples/linux_arti_driver/run.sh
 
-# 安装环境 + 交互式 busybox shell
+# Install environment + interactive busybox shell
 ./examples/linux_arti_driver/run.sh interactive
 
-# 安装环境 + 完整 Debian 开发环境（含网络）
+# Install environment + full Debian development environment (with network)
 ./examples/linux_arti_driver/run.sh debian
 ```
 
-`run.sh` 会自动调用 `setup_env.sh`，该脚本完成以下步骤：
+`run.sh` automatically invokes `setup_env.sh`, which performs the following steps:
 
-1. 安装 ninja 构建工具
-2. 下载并编译 QEMU（含 SLIRP 网络支持 + arti-rtl 设备）
-3. 下载并编译 Linux 内核（AArch64，含 virtio-net + 模块加载 + ext4）
-4. 编译 Busybox（静态二进制，用于 initramfs）
-5. 下载 Debian 12 cloud rootfs + 生成 cloud-init ISO
-6. 编译驱动模块 `.ko`
-7. 生成嵌入式 RTL 模型并编译进 QEMU
+1. Install the ninja build tool
+2. Download and build QEMU (with SLIRP network support + the arti-rtl device)
+3. Download and build the Linux kernel (AArch64, with virtio-net + module loading + ext4)
+4. Build Busybox (static binary, used for the initramfs)
+5. Download the Debian 12 cloud rootfs + generate the cloud-init ISO
+6. Build the driver module `.ko`
+7. Generate the embedded RTL model and compile it into QEMU
 
-也可以单独运行 `setup_env.sh` 只做安装：
+You can also run `setup_env.sh` on its own to only perform the installation:
 
 ```bash
 ./examples/linux_arti_driver/setup_env.sh
 ```
 
-安装完成后，所有产物在 `/tmp` 下，运行脚本会自动检测已安装的组件（重复运行只补缺失项）。
-`setup_env.sh` 会自动按当前 OS 选择包管理器安装缺失依赖：macOS 使用 Homebrew
-（含 AArch64 Linux 交叉工具链 tap），Linux 支持 apt/dnf/yum/pacman/zypper/apk。
+After installation, all artifacts live under `/tmp`; the run scripts automatically detect already-installed components (re-running only fills in missing items).
+`setup_env.sh` automatically picks the package manager for the current OS to install missing dependencies: Homebrew on macOS
+(including the AArch64 Linux cross-toolchain tap), and apt/dnf/yum/pacman/zypper/apk on Linux.
 
 ## Quick start
 
@@ -66,7 +66,7 @@ Run the framework tests with:
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-For the full Linux kernel driver end-to-end test (guest `insmod` -> MMIO -> QEMU -> RTL loopback), see [section 5](#5-linux-内核驱动端到端测试). Quick run after prerequisites are built:
+For the full Linux kernel driver end-to-end test (guest `insmod` -> MMIO -> QEMU -> RTL loopback), see [section 5](#5-linux-kernel-driver-end-to-end-test). Quick run after prerequisites are built:
 
 ```bash
 examples/linux_arti_driver/run_linux_test.sh
@@ -86,11 +86,11 @@ examples/linux_arti_driver/run_linux_test.sh
 A successful generated simulation prints `ARTI COSIM PASS`.
 
 
-## 完整使用教程
+## Full usage tutorial
 
-### 环境准备
+### Environment preparation
 
-Python 仅使用标准库。普通仿真需要 Verilator、SystemC、CMake 和 C++ 编译器；QEMU 联调还需要官方 AArch64 GNU 交叉编译器：
+Python uses only the standard library. Regular simulation requires Verilator, SystemC, CMake, and a C++ compiler; QEMU co-simulation additionally requires the official AArch64 GNU cross-compiler:
 
 ```bash
 verilator --version
@@ -101,7 +101,7 @@ meson --version
 pkg-config --exists glib-2.0 pixman-1 && echo "QEMU build deps OK"
 ```
 
-如果交叉编译器缺失，`setup_env.sh` 会自动安装；也可以按平台手动安装：
+If the cross-compiler is missing, `setup_env.sh` installs it automatically; you can also install it manually per platform:
 
 ```bash
 # macOS
@@ -121,18 +121,18 @@ sudo pacman -S --needed aarch64-linux-gnu-gcc
 sudo zypper --non-interactive install cross-aarch64-gcc
 ```
 
-macOS 安装后命令名为 `aarch64-unknown-linux-gnu-gcc`，`setup_env.sh` 和
-`run_linux_test.sh` 会自动识别并设置对应的 `CROSS_COMPILE` 前缀。macOS 上
-`setup_env.sh` 还会自动安装 GNU 工具链和 `bee-headers`（提供 Linux 内核 host
-编译需要的 `elf.h` / `byteswap.h` / `endian.h`）。
+After installation on macOS the command is named `aarch64-unknown-linux-gnu-gcc`; `setup_env.sh` and
+`run_linux_test.sh` automatically detect it and set the corresponding `CROSS_COMPILE` prefix. On macOS,
+`setup_env.sh` also automatically installs the GNU toolchain and `bee-headers` (which provide the
+`elf.h` / `byteswap.h` / `endian.h` headers needed for host-side Linux kernel builds).
 
-### 通用 framebuffer 显示扩展
+### Generic framebuffer display extension
 
-配置里加一段 `display` 后，生成的 `arti-rtl.c` 会包含 `GraphicHwOps`，并暴露一块
-guest 可写的 framebuffer。显示设备在 `0x0B000000`，framebuffer 默认在
-`0x0B100000`，格式为 32bpp `a8r8g8b8`。ARTI 还会自动往 virt 设备树里加
-`/framebuffer` 节点（`simple-framebuffer`），Linux 开启
-`CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` 后即可用作启动显示。
+After adding a `display` section to the config, the generated `arti-rtl.c` includes `GraphicHwOps` and exposes a
+guest-writable framebuffer. The display device is at `0x0B000000`, the framebuffer defaults to
+`0x0B100000`, and the format is 32bpp `a8r8g8b8`. ARTI also automatically adds a
+`/framebuffer` node (`simple-framebuffer`) to the virt device tree, so with
+`CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` enabled, Linux can use it as the boot display.
 
 ```yaml
 display:
@@ -144,28 +144,28 @@ display:
   framebuffer_size: 0x800000
 ```
 
-一键环境开启显示版本：
+One-click environment with display enabled:
 
 ```bash
 ARTI_DISPLAY=1 ./examples/linux_arti_driver/run.sh
 ```
 
-Debian 环境默认打开 QEMU 图形窗口（macOS 使用 Cocoa），可以用 `QEMU_DISPLAY`
-覆盖，例如 `QEMU_DISPLAY=none` 保持无头运行：
+The Debian environment opens a QEMU graphics window by default (Cocoa on macOS); you can override this with `QEMU_DISPLAY`,
+for example `QEMU_DISPLAY=none` to keep running headless:
 
 ```bash
 QEMU_DISPLAY=cocoa ./examples/linux_arti_driver/run.sh debian
 QEMU_DISPLAY=none  ./examples/linux_arti_driver/run.sh debian
 ```
 
-也可以直接用示例配置生成：
+You can also generate directly from the example config:
 
 ```bash
 PYTHONPATH=src python3 -m arti.cli generate \
   examples/simple_fb/config.yaml --output /tmp/simple_fb
 ```
 
-原生 QEMU 源码目录由环境变量 `$QEMU_SRC` 指定，已编译的 QEMU 位于 `/tmp/qemu-arti-build/qemu-system-aarch64`。设置变量后重新构建：
+The upstream QEMU source directory is specified by the `$QEMU_SRC` environment variable; the built QEMU is located at `/tmp/qemu-arti-build/qemu-system-aarch64`. After setting the variable, rebuild:
 
 ```bash
 export QEMU_SRC=${QEMU_SRC:-$(pwd)/../qemu}
@@ -176,15 +176,15 @@ PATH=/tmp/qemu-build-tools/bin:$PATH $QEMU_SRC/configure \
 PATH=/tmp/qemu-build-tools/bin:$PATH ninja -C /tmp/qemu-arti-build qemu-system-aarch64
 ```
 
-### 1. 检查 RTL
+### 1. Inspect the RTL
 
 ```bash
 PYTHONPATH=src python3 -m arti.cli inspect examples/simple_gpio/simple_gpio.v --top simple_gpio
 ```
 
-输出 JSON，包含端口签名、协议推断、信号映射、缺失信号和未知端口。
+Outputs JSON containing the port signature, protocol inference, signal mapping, missing signals, and unknown ports.
 
-### 2. 本地 SystemC/Verilator 仿真
+### 2. Local SystemC/Verilator simulation
 
 ```bash
 PYTHONPATH=src python3 -m arti.cli generate \
@@ -192,20 +192,20 @@ PYTHONPATH=src python3 -m arti.cli generate \
 /tmp/simple_gpio_cosim/build/run_cosim.sh
 ```
 
-成功时输出 `ARTI COSIM PASS`。生成目录中的 `bridge/bridge_top.h` 是 AXI-Lite TLM 到 RTL 的桥，`reports/inference_report.json` 是推断报告。
+On success it prints `ARTI COSIM PASS`. In the generated directory, `bridge/bridge_top.h` is the AXI-Lite TLM-to-RTL bridge, and `reports/inference_report.json` is the inference report.
 
-### 3. 原生 QEMU SysBus 联调（socket 模式）
+### 3. Upstream QEMU SysBus co-simulation (socket mode)
 
-> **提示**：如需在 Linux 内核中测试驱动，推荐使用 [第 5 节](#5-linux-内核驱动端到端测试) 的嵌入式模式（RTL 直接编译进 QEMU），无需 cosim 进程或 socket。本节描述的是 socket 模式，适用于需要 SystemC 精确周期仿真的场景。
+> **Tip**: to test the driver in the Linux kernel, the embedded mode described in [section 5](#5-linux-kernel-driver-end-to-end-test) is recommended (RTL compiled directly into QEMU), with no cosim process or socket needed. This section describes socket mode, which is suitable for scenarios that require cycle-accurate SystemC simulation.
 
-ARTI 不依赖 PCI、VFIO、Xilinx QEMU 或 remote-port，数据路径为：
+ARTI does not depend on PCI, VFIO, Xilinx QEMU, or remote-port; the data path is:
 
 ```text
 AArch64 guest MMIO -> QEMU arti-rtl SysBus -> Unix socket
 -> SystemC/TLM -> AXI-Lite -> Verilated RTL
 ```
 
-先创建 QEMU 模式配置并编译 cosim：
+First create a QEMU-mode config and build the cosim:
 
 ```bash
 cp examples/simple_gpio/config.yaml /tmp/simple_gpio_qemu.yaml
@@ -215,14 +215,14 @@ cmake -S /tmp/simple_gpio_qemu -B /tmp/simple_gpio_qemu/build/cmake
 cmake --build /tmp/simple_gpio_qemu/build/cmake --parallel
 ```
 
-终端 A 启动 SystemC socket 服务端：
+Terminal A: start the SystemC socket server:
 
 ```bash
 rm -f /tmp/arti-qemu.sock
 /tmp/simple_gpio_qemu/build/cmake/cosim /tmp/arti-qemu.sock
 ```
 
-终端 B 启动原生 QEMU 客户端：
+Terminal B: start the upstream QEMU client:
 
 ```bash
 /tmp/qemu-arti-build/qemu-system-aarch64 \
@@ -231,9 +231,9 @@ rm -f /tmp/arti-qemu.sock
   -kernel /tmp/arti-aarch64/guest.elf
 ```
 
-`virt` 设备的 MMIO 地址是 `0x0B000000`，窗口大小为 `0x1000`。
+The MMIO address of the `virt` device is `0x0B000000`, with a window size of `0x1000`.
 
-### 4. 构建最小 AArch64 guest
+### 4. Build a minimal AArch64 guest
 
 ```bash
 mkdir -p /tmp/arti-aarch64
@@ -271,81 +271,81 @@ aarch64-linux-gnu-gcc -ffreestanding -nostdlib -nostartfiles -O2 -c /tmp/arti-aa
 aarch64-linux-gnu-ld -T /tmp/arti-aarch64/link.ld /tmp/arti-aarch64/start.o /tmp/arti-aarch64/main.o -o /tmp/arti-aarch64/guest.elf
 ```
 
-### 5. Linux 内核驱动端到端测试
+### 5. Linux kernel driver end-to-end test
 
-本节验证完整链路：真实 Linux 内核加载 `arti_rtl_test.ko` 驱动，驱动 probe 函数通过 MMIO 向 RTL 设备写入并读回数据。
+This section verifies the full chain: a real Linux kernel loads the `arti_rtl_test.ko` driver, whose probe function writes data to the RTL device over MMIO and reads it back.
 
-RTL 模型（Verilated `simple_gpio`）直接编译进 QEMU 设备，**无需外部 cosim 进程或 Unix socket**：
+The RTL model (Verilated `simple_gpio`) is compiled directly into the QEMU device — **no external cosim process or Unix socket is needed**:
 
 ```text
 Linux guest insmod arti_rtl_test.ko
-  -> 驱动 probe: iowrite32(0x123456a5) @0x0B000000
-  -> QEMU arti-rtl SysBus（嵌入式 Verilated 模型）
-  -> AXI-Lite 握手 -> simple_gpio RTL
-  -> ioread32 读回 0x123456a5 -> ARTI LINUX PASS
+  -> driver probe: iowrite32(0x123456a5) @0x0B000000
+  -> QEMU arti-rtl SysBus (embedded Verilated model)
+  -> AXI-Lite handshake -> simple_gpio RTL
+  -> ioread32 reads back 0x123456a5 -> ARTI LINUX PASS
 ```
 
-涉及文件（均在 `examples/linux_arti_driver/`）：
+Files involved (all under `examples/linux_arti_driver/`):
 
-- `arti_rtl_test.c` — 平台驱动，probe 中 write+read 验证
-- `arti-linux-init.c` — 静态 init 程序，mount + finit_module + poweroff
-- `build_embedded_qemu.sh` — 一键生成嵌入式模型并重编 QEMU（支持任意 AXI-Lite RTL）
-- `run_linux_test.sh` — 一键测试脚本
+- `arti_rtl_test.c` — platform driver with write+read verification in probe
+- `arti-linux-init.c` — static init program: mount + finit_module + poweroff
+- `build_embedded_qemu.sh` — one-click script to generate the embedded model and rebuild QEMU (supports any AXI-Lite RTL)
+- `run_linux_test.sh` — one-click test script
 
-`arti_rtl_model.cpp` 和 `arti_rtl_model.h` 由 arti 框架根据 RTL 自动生成，无需手写。
+`arti_rtl_model.cpp` and `arti_rtl_model.h` are generated automatically by the arti framework from the RTL; no hand-writing is needed.
 
-#### 5.0 前置条件
+#### 5.0 Prerequisites
 
-本节使用以下环境变量指定源码路径，请根据实际位置设置：
+This section uses the following environment variables for source paths; set them according to your actual locations:
 
 ```bash
-export ARTI_DIR=${ARTI_DIR:-$(pwd)}            # ARTI 项目根目录
-export QEMU_SRC=${QEMU_SRC:-$(pwd)/../qemu}    # QEMU 源码目录
-export LINUX_SRC=${LINUX_SRC:-$(pwd)/../linux}  # Linux 内核源码目录
+export ARTI_DIR=${ARTI_DIR:-$(pwd)}            # ARTI project root directory
+export QEMU_SRC=${QEMU_SRC:-$(pwd)/../qemu}    # QEMU source directory
+export LINUX_SRC=${LINUX_SRC:-$(pwd)/../linux}  # Linux kernel source directory
 ```
 
-需要以下工具，确认全部就绪后再继续：
+The following tools are required; confirm they are all ready before continuing:
 
 ```bash
-# 交叉编译器
+# Cross-compiler
 aarch64-linux-gnu-gcc --version
 
-# Verilator（嵌入式模型构建依赖）
+# Verilator (required to build the embedded model)
 verilator --version
 
-# QEMU 源码树（已集成 arti-rtl 设备）
+# QEMU source tree (with the arti-rtl device integrated)
 test -f "$QEMU_SRC"/hw/misc/arti-rtl.c && echo "arti-rtl.c OK"
 
-# Linux 内核源码树
+# Linux kernel source tree
 test -f "$LINUX_SRC"/Makefile && echo "linux tree OK"
 ```
 
-#### 5.1 编译嵌入式 QEMU（含 Verilated RTL 模型）
+#### 5.1 Build the embedded QEMU (with the Verilated RTL model)
 
-arti 框架根据 RTL 自动生成 C++ 包装器（`arti_rtl_model.cpp`），驱动 AXI-Lite 握手。
-支持任意 AXI-Lite RTL 模块——端口名、地址宽度、数据宽度均自动适配。
+The arti framework automatically generates a C++ wrapper (`arti_rtl_model.cpp`) from the RTL that drives the AXI-Lite handshake.
+Any AXI-Lite RTL module is supported — port names, address width, and data width are all adapted automatically.
 
-**5.1.1 一键构建（支持任意 RTL）：**
+**5.1.1 One-click build (supports any RTL):**
 
 ```bash
 cd "$ARTI_DIR"
-# 默认使用 simple_gpio；更换 RTL 只需改 RTL 和 TOP 变量
+# Uses simple_gpio by default; to switch RTL, only change the RTL and TOP variables
 examples/linux_arti_driver/build_embedded_qemu.sh
 
-# 例如使用 reg_file RTL（不同的端口名 m_axi_、4 位地址、多寄存器）
+# For example, using the reg_file RTL (different port names m_axi_, 4-bit address, multiple registers)
 RTL=examples/reg_file/reg_file.v TOP=reg_file \
   examples/linux_arti_driver/build_embedded_qemu.sh
 ```
 
-脚本自动完成：
-1. arti CLI 解析 RTL → 推断 AXI-Lite 协议 → 生成端口映射 → 生成 C++ 包装器
-2. Verilator 编译 RTL 为 C++ 模型
-3. 编译 `V*.cpp` + `verilated.cpp` + `arti_rtl_model.cpp` 为 `libarti_rtl_model.a`
-4. 安装到 `$QEMU_SRC/hw/misc/` 并用 ninja 重编 QEMU
+The script automatically:
+1. Uses the arti CLI to parse the RTL → infer the AXI-Lite protocol → generate the port mapping → generate the C++ wrapper
+2. Uses Verilator to compile the RTL into a C++ model
+3. Compiles `V*.cpp` + `verilated.cpp` + `arti_rtl_model.cpp` into `libarti_rtl_model.a`
+4. Installs it into `$QEMU_SRC/hw/misc/` and rebuilds QEMU with ninja
 
-**5.1.2 从零编译 QEMU（首次构建）：**
+**5.1.2 Build QEMU from scratch (first-time build):**
 
-如果 `/tmp/qemu-arti-build/qemu-system-aarch64` 不存在：
+If `/tmp/qemu-arti-build/qemu-system-aarch64` does not exist:
 
 ```bash
 mkdir -p /tmp/qemu-arti-build
@@ -356,7 +356,7 @@ PATH=/tmp/qemu-build-tools/bin:$PATH ./configure \
 PATH=/tmp/qemu-build-tools/bin:$PATH ninja -C /tmp/qemu-arti-build qemu-system-aarch64
 ```
 
-验证 QEMU 已集成嵌入式设备：
+Verify that QEMU has the embedded device integrated:
 
 ```bash
 grep "arti" "$QEMU_SRC"/hw/misc/meson.build
@@ -364,7 +364,7 @@ grep "create_arti_rtl" "$QEMU_SRC"/hw/arm/virt.c
 ls -lh /tmp/qemu-arti-build/qemu-system-aarch64
 ```
 
-#### 5.2 编译最小 AArch64 内核
+#### 5.2 Build a minimal AArch64 kernel
 
 ```bash
 cd "$LINUX_SRC"
@@ -372,14 +372,14 @@ make ARCH=arm64 defconfig CROSS_COMPILE=aarch64-linux-gnu- O=/tmp/arti-linux-bui
 make ARCH=arm64 Image CROSS_COMPILE=aarch64-linux-gnu- O=/tmp/arti-linux-build -j$(nproc)
 ```
 
-完成后确认产物存在：
+When finished, confirm the artifacts exist:
 
 ```bash
 ls -lh /tmp/arti-linux-build/arch/arm64/boot/Image
 head -1 /tmp/arti-linux-build/include/config/kernel.release
 ```
 
-#### 5.3 编译驱动模块
+#### 5.3 Build the driver module
 
 ```bash
 cd "$ARTI_DIR"
@@ -388,34 +388,34 @@ make -C /tmp/arti-linux-build \
     ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules
 ```
 
-确认 `.ko` 生成且 vermagic 与内核一致：
+Confirm the `.ko` is generated and that vermagic matches the kernel:
 
 ```bash
 ls -lh examples/linux_arti_driver/arti_rtl_test.ko
 strings examples/linux_arti_driver/arti_rtl_test.ko | grep vermagic
-# 应输出: vermagic=7.2.0-rc6-... SMP preempt aarch64
-# 与 kernel.release 内容对应
+# Should output: vermagic=7.2.0-rc6-... SMP preempt aarch64
+# corresponding to the contents of kernel.release
 ```
 
-#### 5.4 一键运行端到端测试
+#### 5.4 Run the end-to-end test in one click
 
-以上 5.1–5.3 全部完成后，执行：
+After all of 5.1–5.3 above are complete, run:
 
 ```bash
 cd "$ARTI_DIR"
 examples/linux_arti_driver/run_linux_test.sh
 ```
 
-脚本自动完成以下步骤：
+The script automatically performs the following steps:
 
-1. 用 `aarch64-linux-gnu-gcc` 编译 `arti-linux-init.c` 为静态 ARM64 init
-2. 打包 init + `.ko` 为 initramfs（cpio.gz）
-3. 启动 QEMU 加载内核 Image + initramfs，guest 自动 `insmod` 并验证 MMIO
-4. 30 秒超时后检查输出
+1. Compiles `arti-linux-init.c` with `aarch64-linux-gnu-gcc` into a static ARM64 init
+2. Packages init + the `.ko` into an initramfs (cpio.gz)
+3. Boots QEMU with the kernel Image + initramfs; the guest automatically runs `insmod` and verifies MMIO
+4. Checks the output after a 30-second timeout
 
-**无需启动外部 cosim 进程**，QEMU 内嵌的 Verilated 模型直接处理 MMIO 请求。
+**No external cosim process needs to be started** — the Verilated model embedded in QEMU handles MMIO requests directly.
 
-成功时输出：
+On success it prints:
 
 ```
 ARTI Linux init: loading module...
@@ -427,7 +427,7 @@ reboot: Power down
 === ARTI LINUX TEST COMPLETE (PASS) ===
 ```
 
-脚本支持环境变量自定义路径：
+The script supports environment variables to customize paths:
 
 ```bash
 QEMU=/tmp/qemu-arti-build/qemu-system-aarch64 \
@@ -435,9 +435,9 @@ KERNEL=/tmp/arti-linux-build/arch/arm64/boot/Image \
 examples/linux_arti_driver/run_linux_test.sh
 ```
 
-#### 5.5 手动运行（调试用）
+#### 5.5 Run manually (for debugging)
 
-直接启动 QEMU，无需任何额外进程或参数：
+Start QEMU directly, without any extra processes or parameters:
 
 ```bash
 /tmp/qemu-arti-build/qemu-system-aarch64 \
@@ -447,32 +447,32 @@ examples/linux_arti_driver/run_linux_test.sh
   -append "console=ttyAMA0"
 ```
 
-注意：嵌入式模式下不再需要 `-chardev socket` 参数。MMIO 地址为 `0x0B000000`，窗口大小 `0x1000`。
+Note: in embedded mode the `-chardev socket` parameter is no longer needed. The MMIO address is `0x0B000000`, with a window size of `0x1000`.
 
 
-### 5.6 完整 Debian 开发环境（含网络）
+### 5.6 Full Debian development environment (with network)
 
-如果需要真实可用的 Linux 环境（systemd、apt、gcc 等），可以启动完整的 Debian rootfs：
+If you need a real, usable Linux environment (systemd, apt, gcc, etc.), you can boot a full Debian rootfs:
 
 ```bash
 ./examples/linux_arti_driver/run_debian.sh
 ```
 
-功能：
+Features:
 
-- Debian 12 (bookworm) ARM64，10GB 持久化 qcow2 磁盘
-- SLIRP 用户态网络，支持 `apt update` / `apt install`、DNS 解析
-- SSH 端口转发：宿主机 `ssh -p 2222 root@localhost`（密码 `arti`）
-- ARTI 嵌入式设备在 MMIO `0x0B000000`
-- 退出：在 VM 内执行 `poweroff -f`，或按 `Ctrl+A` 然后按 `X`
+- Debian 12 (bookworm) ARM64, 10GB persistent qcow2 disk
+- SLIRP user-mode networking, supporting `apt update` / `apt install` and DNS resolution
+- SSH port forwarding: `ssh -p 2222 root@localhost` from the host (password `arti`)
+- ARTI embedded device at MMIO `0x0B000000`
+- To exit: run `poweroff -f` inside the VM, or press `Ctrl+A` then `X`
 
-网络配置通过 cloud-init 自动完成：首次启动时创建 `arti-net.service`（systemd oneshot），配置 SLIRP 静态 IP（`10.0.2.15/24`，网关 `10.0.2.2`，DNS `10.0.2.3`）。之后每次启动自动生效，无需 DHCP。
+Network configuration is done automatically via cloud-init: on first boot an `arti-net.service` (systemd oneshot) is created to configure the SLIRP static IP (`10.0.2.15/24`, gateway `10.0.2.2`, DNS `10.0.2.3`). It takes effect automatically on every subsequent boot, with no DHCP needed.
 
-cloud-init ISO 由 `build_cloudinit.sh` 自动生成（首次启动时 `run_debian.sh` 会检测并自动构建），内嵌 `.ko` 模块和网络服务配置。
+The cloud-init ISO is generated automatically by `build_cloudinit.sh` (on first boot `run_debian.sh` detects it and builds it automatically); it embeds the `.ko` module and the network service configuration.
 
-#### 前置条件：内核需包含 virtio-net 驱动
+#### Prerequisite: the kernel must include the virtio-net driver
 
-内核默认配置未启用网络设备子系统。需要手动启用：
+The default kernel configuration does not enable the network device subsystem. Enable it manually:
 
 ```bash
 cd "$LINUX_SRC"
@@ -482,96 +482,96 @@ make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) Image
 ```
 
-#### 前置条件：QEMU 需编译 SLIRP 支持
+#### Prerequisite: QEMU must be built with SLIRP support
 
-SLIRP 需要单独编译后链接进 QEMU。关键步骤：
+SLIRP must be built separately and linked into QEMU. Key steps:
 
 ```bash
-# 1. 构建 libslirp 静态库
+# 1. Build the libslirp static library
 cd /tmp && curl -sSL https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.8.0/libslirp-v4.8.0.tar.gz | tar xz
 cd libslirp-v4.8.0 && mkdir build && cd build
 meson setup --default-library=static --prefix=/tmp/slirp-install .
 ninja -C . && ninja -C . install
 
-# 2. 告诉 meson 在哪里找 slirp（关键：meson 会覆盖 PKG_CONFIG_PATH，必须用内置选项）
+# 2. Tell meson where to find slirp (key point: meson overrides PKG_CONFIG_PATH, so the built-in option must be used)
 cd /tmp/qemu-arti-build
 meson configure . -Dpkg_config_path=/tmp/slirp-install/lib/pkgconfig -Dslirp=enabled
 meson setup --reconfigure --clearcache $QEMU_SRC /tmp/qemu-arti-build
 
-# 3. 重新编译
+# 3. Rebuild
 ninja -C /tmp/qemu-arti-build qemu-system-aarch64
 
-# 4. 验证
+# 4. Verify
 /tmp/qemu-arti-build/qemu-system-aarch64 -machine virt -netdev help 2>&1 | grep user
 ```
 
-> 注意：meson 的 pkg-config 探测会用机器文件中的 `pkg_config_path` 属性**覆盖**环境变量 `PKG_CONFIG_PATH`。
-> 如果没有 native 机器文件，该属性为空，导致 slirp 找不到。
-> 解决方法是用 `meson configure -Dpkg_config_path=...` 直接设置内置选项。
+> Note: meson's pkg-config probing **overrides** the `PKG_CONFIG_PATH` environment variable with the `pkg_config_path` property from the machine file.
+> If there is no native machine file, that property is empty, which causes slirp not to be found.
+> The solution is to set the built-in option directly with `meson configure -Dpkg_config_path=...`.
 
-### 5.7 支持的总线协议和中断
+### 5.7 Supported bus protocols and interrupts
 
-ARTI 自动检测以下 5 种总线协议并生成对应的嵌入式模型代码：
+ARTI automatically detects the following 5 bus protocols and generates the corresponding embedded model code:
 
-| 协议 | 检测信号 | 状态 |
+| Protocol | Detection signals | Status |
 |------|---------|------|
-| AXI-Lite | AWADDR/AWVALID/WDATA/BRESP/ARADDR/RDATA 等 | 完整支持 |
-| AXI4 | 含 AWLEN/AWSIZE/AWBURST/WLAST/ARLEN/RLAST 等突发信号 | 完整支持 |
-| APB | PADDR/PWDATA/PRDATA/PWRITE/PSEL/PENABLE/PREADY | 完整支持 |
-| AHB | HADDR/HWDATA/HRDATA/HWRITE/HTRANS/HREADY | 完整支持 |
-| AXI-Stream | TDATA/TVALID/TREADY (TLAST/TKEEP 等可选) | 完整支持 |
+| AXI-Lite | AWADDR/AWVALID/WDATA/BRESP/ARADDR/RDATA etc. | Full support |
+| AXI4 | Burst signals including AWLEN/AWSIZE/AWBURST/WLAST/ARLEN/RLAST etc. | Full support |
+| APB | PADDR/PWDATA/PRDATA/PWRITE/PSEL/PENABLE/PREADY | Full support |
+| AHB | HADDR/HWDATA/HRDATA/HWRITE/HTRANS/HREADY | Full support |
+| AXI-Stream | TDATA/TVALID/TREADY (TLAST/TKEEP etc. optional) | Full support |
 
-**协议自动检测**：无需在 config.yaml 中指定协议（设 `protocol: auto` 即可）。框架根据端口名匹配最优协议，并输出置信度报告。
+**Automatic protocol detection**: no need to specify the protocol in config.yaml (just set `protocol: auto`). The framework matches the best protocol based on port names and outputs a confidence report.
 
-**切换 RTL 只需改配置文件**：
+**Switching RTL only requires changing the config file**:
 
 ```bash
-# 使用 APB 设备
+# Use an APB device
 arti generate examples/apb_gpio/config.yaml --output /tmp/apb_project
 
-# 使用 AXI4 设备
+# Use an AXI4 device
 arti generate examples/axi4_periph/config.yaml --output /tmp/axi4_project
 
-# 使用 AHB 设备
+# Use an AHB device
 arti generate examples/ahb_gpio/config.yaml --output /tmp/ahb_project
 ```
 
-#### 中断自动支持
+#### Automatic interrupt support
 
-如果 RTL 有中断输出端口（端口名包含 `irq`、`interrupt`、`intr`、`int` 等模式），框架会自动：
+If the RTL has interrupt output ports (port names matching patterns such as `irq`, `interrupt`, `intr`, `int`), the framework automatically:
 
-1. **检测中断端口**：通过 `inference.py` 中的 `_detect_interrupts()` 函数，自动识别 1-bit 输出端口中的中断信号
-2. **生成 IRQ 检查 API**：在 `arti_rtl_model.h` 中生成 `arti_rtl_model_check_irq(unsigned index)` 函数
-3. **注册 QEMU SysBus IRQ**：在 `arti-rtl.c` 中调用 `sysbus_init_irq()` 注册 IRQ 输出
-4. **轮询中断状态**：创建 100μs 周期的 `QEMUTimer`，通过 `qemu_set_irq()` 向 guest 发送中断
+1. **Detects interrupt ports**: via the `_detect_interrupts()` function in `inference.py`, automatically identifying interrupt signals among 1-bit output ports
+2. **Generates the IRQ check API**: generates the `arti_rtl_model_check_irq(unsigned index)` function in `arti_rtl_model.h`
+3. **Registers the QEMU SysBus IRQ**: calls `sysbus_init_irq()` in `arti-rtl.c` to register the IRQ output
+4. **Polls interrupt status**: creates a `QEMUTimer` with a 100μs period, sending interrupts to the guest via `qemu_set_irq()`
 
-示例 RTL（`examples/irq_timer/`）演示了一个带中断输出的 AXI-Lite 定时器，框架自动检测到 `irq` 端口并生成完整的中断支持代码。
+The example RTL (`examples/irq_timer/`) demonstrates an AXI-Lite timer with an interrupt output; the framework automatically detects the `irq` port and generates complete interrupt support code.
 
 ```bash
-# 查看中断检测结果
+# View the interrupt detection result
 PYTHONPATH=src python3 -c "
 from arti.parser import parse_verilog
 from arti.inference import infer_protocol
 sig = parse_verilog('examples/irq_timer/irq_timer.v', 'irq_timer')
 print(infer_protocol(sig)['interrupts'])
 "
-# 输出: [{'name': 'irq', 'width': 1}]
+# Output: [{'name': 'irq', 'width': 1}]
 ```
 
-### 6. 回归测试和排错
+### 6. Regression tests and troubleshooting
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-#### 通用问题
+#### General issues
 
-- `ARTI COSIM PASS` 后立即退出：这是 local 模式自测（`mode: local`）；Linux 驱动测试使用嵌入式模式，不需要 cosim。
-- 没有 `ARTI LINUX PASS`：确认 guest 访问 `0x0B000000`，并使用本项目编译的 QEMU（含嵌入式 Verilated 模型）。
+- Exits immediately after `ARTI COSIM PASS`: this is the local-mode self-test (`mode: local`); the Linux driver test uses embedded mode and does not need the cosim.
+- No `ARTI LINUX PASS`: confirm the guest accesses `0x0B000000` and that you are using the QEMU built by this project (with the embedded Verilated model).
 
-#### Linux 驱动测试问题
+#### Linux driver test issues
 
-- **`insmod` 失败 / vermagic 不匹配**：`.ko` 必须用与内核 Image 相同的源码树和编译器构建。确认 `strings arti_rtl_test.ko | grep vermagic` 输出与 `cat /tmp/arti-linux-build/include/config/kernel.release` 一致。
-- **`finit_module` 返回非零**：检查 dmesg 输出。常见原因是 vermagic 不匹配或内核未启用模块加载（`CONFIG_MODULES=y`）。
-- **QEMU 启动后无输出**：确认使用的 QEMU 是本项目编译的版本（`/tmp/qemu-arti-build/qemu-system-aarch64`），且 `libarti_rtl_model.a` 已安装到 `$QEMU_SRC/hw/misc/`。重新运行 `build_embedded_qemu.sh` 重建。
-- **链接错误 `undefined reference to VerilatedContext`**：静态库未包含 `verilated.o` 和 `verilated_threads.o`。重新运行 `build_embedded_qemu.sh`。
+- **`insmod` fails / vermagic mismatch**: the `.ko` must be built with the same source tree and compiler as the kernel Image. Confirm the output of `strings arti_rtl_test.ko | grep vermagic` matches `cat /tmp/arti-linux-build/include/config/kernel.release`.
+- **`finit_module` returns non-zero**: check the dmesg output. Common causes are a vermagic mismatch or module loading not enabled in the kernel (`CONFIG_MODULES=y`).
+- **No output after QEMU starts**: confirm the QEMU in use is the version built by this project (`/tmp/qemu-arti-build/qemu-system-aarch64`) and that `libarti_rtl_model.a` has been installed into `$QEMU_SRC/hw/misc/`. Re-run `build_embedded_qemu.sh` to rebuild.
+- **Link error `undefined reference to VerilatedContext`**: the static library does not include `verilated.o` and `verilated_threads.o`. Re-run `build_embedded_qemu.sh`.
