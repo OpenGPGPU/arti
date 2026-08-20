@@ -113,10 +113,32 @@ def render_socket_adapter(config) -> dict[str, str]:
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <fcntl.h>
+#endif
 #include <systemc>
 #include <tlm>
 #include <tlm_utils/simple_initiator_socket.h>
 #include "qemu/arti_wire.h"
+
+#ifdef __APPLE__
+static void arti_set_nonblock(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+}
+
+static int arti_accept_nonblock(int fd)
+{
+    int client = accept(fd, nullptr, nullptr);
+    if (client >= 0) {
+        arti_set_nonblock(client);
+    }
+    return client;
+}
+#endif
 
 SC_MODULE(QemuSocketAdapter) {
     tlm_utils::simple_initiator_socket<QemuSocketAdapter> initiator{"initiator"};
@@ -173,16 +195,30 @@ private:
         response.data = data;
     }
     void run() {
+#ifdef __APPLE__
+        server_ = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (server_ >= 0) {
+            arti_set_nonblock(server_);
+        }
+#else
         server_ = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+#endif
         if (server_ < 0) SC_REPORT_FATAL("QemuSocketAdapter", "socket failed");
         sockaddr_un address{}; address.sun_family = AF_UNIX;
         if (std::strlen(path_) >= sizeof(address.sun_path))
             SC_REPORT_FATAL("QemuSocketAdapter", "socket path too long");
         std::strcpy(address.sun_path, path_); unlink(path_);
         if (bind(server_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0 ||
-            listen(server_, 1) < 0) SC_REPORT_FATAL("QemuSocketAdapter", "bind/listen failed");
+            listen(server_, 1) < 0)
+            SC_REPORT_FATAL("QemuSocketAdapter",
+                            (std::string("bind/listen failed: ") +
+                             std::strerror(errno)).c_str());
         while (true) {
+#ifdef __APPLE__
+            if (client_ < 0) client_ = arti_accept_nonblock(server_);
+#else
             if (client_ < 0) client_ = accept4(server_, nullptr, nullptr, SOCK_NONBLOCK);
+#endif
             if (client_ >= 0) {
 
                 if (receive_request()) {
@@ -239,7 +275,7 @@ def render_embedded_model(config, signature, mapping, port_by_name, protocol, in
 
     wrapper = render_model(protocol, config, signature, mapping, port_by_name, interrupts)
     header = render_header(len(interrupts))
-    qemu_stub = render_qemu_stub(config.mmio_size, interrupts)
+    qemu_stub = render_qemu_stub(config.mmio_size, interrupts, config)
 
     build_script = f"""#!/usr/bin/env bash
 set -euo pipefail
@@ -274,9 +310,17 @@ cp "$SCRIPT_DIR/arti_rtl_model.h" "$QEMU_SRC/hw/misc/"
 
 # 4. Rebuild QEMU
 echo "=== Rebuilding QEMU ==="
-PATH=/tmp/qemu-build-tools/bin:$PATH ninja -C "$QEMU_BUILD" qemu-system-aarch64
-echo "=== Done ==="
-ls -lh "$QEMU_BUILD/qemu-system-aarch64"
+if [ "${{SKIP_QEMU_REBUILD:-}}" != "1" ]; then
+    if [ ! -f "$QEMU_BUILD/build.ninja" ]; then
+        echo "QEMU build directory not configured yet; run setup_env.sh first"
+        exit 1
+    fi
+    PATH=/tmp/qemu-build-tools/bin:$PATH ninja -C "$QEMU_BUILD" qemu-system-aarch64
+    echo "=== Done ==="
+    ls -lh "$QEMU_BUILD/qemu-system-aarch64"
+else
+    echo "SKIP_QEMU_REBUILD=1, leaving QEMU build to setup_env.sh"
+fi
 """
 
     irq_info = f" Interrupts: {len(interrupts)} ({', '.join(i['name'] for i in interrupts)})" if interrupts else ""

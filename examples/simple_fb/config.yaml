@@ -1,0 +1,24 @@
+project:
+  name: arti_simple_fb
+
+rtl:
+  top_module: simple_gpio
+  source_files: [../simple_gpio/simple_gpio.v]
+  clk_freq_mhz: 100
+
+bridge:
+  protocol: auto
+  base_address: "0x0B00_0000"
+  data_width: 32
+  mode: qemu-embedded
+
+display:
+  enabled: true
+  width: 1024
+  height: 768
+  format: a8r8g8b8
+  framebuffer_offset: 0x100000
+  framebuffer_size: 0x800000
+
+advanced:
+  timeout_cycles: 1000

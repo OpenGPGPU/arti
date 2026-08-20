@@ -87,6 +87,26 @@ class FrameworkTest(unittest.TestCase):
             self.assertNotIn("vfio", qemu_args.lower())
             self.assertNotIn("xilinx", stub.lower())
 
+    def test_generate_qemu_display_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.yaml"
+            config.write_text(
+                "rtl:\n  top_module: simple_gpio\n  source_files: [simple_gpio.v]\n"
+                "bridge:\n  mode: qemu-embedded\n  base_address: \"0x0B000000\"\n"
+                "  data_width: 32\n"
+                "display:\n  enabled: true\n  width: 800\n  height: 600\n"
+                "  framebuffer_offset: 0x100000\n  framebuffer_size: 0x960000\n"
+            )
+            (Path(tmp) / "simple_gpio.v").write_text(RTL.read_text())
+            output = Path(tmp) / "generated"
+            self.assertEqual(main(["generate", str(config), "--output", str(output)]), 0)
+            stub = (output / "qemu/arti-rtl.c").read_text()
+            self.assertIn("GraphicHwOps", stub)
+            self.assertIn("qemu_graphic_console_create", stub)
+            self.assertIn("ARTI_FB_OFFSET", stub)
+            self.assertIn("qemu_console_update_full", stub)
+            self.assertIn("memcpy(s->vram", stub)
+
 
     @unittest.skipUnless(shutil.which("verilator") and shutil.which("pkg-config"),
                          "Verilator/SystemC build dependencies are unavailable")

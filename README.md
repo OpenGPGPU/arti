@@ -42,6 +42,8 @@ or Unix socket.
 ```
 
 安装完成后，所有产物在 `/tmp` 下，运行脚本会自动检测已安装的组件（重复运行只补缺失项）。
+`setup_env.sh` 会自动按当前 OS 选择包管理器安装缺失依赖：macOS 使用 Homebrew
+（含 AArch64 Linux 交叉工具链 tap），Linux 支持 apt/dnf/yum/pacman/zypper/apk。
 
 ## Quick start
 
@@ -95,6 +97,72 @@ verilator --version
 pkg-config --modversion systemc
 cmake --version
 aarch64-linux-gnu-gcc --version
+meson --version
+pkg-config --exists glib-2.0 pixman-1 && echo "QEMU build deps OK"
+```
+
+如果交叉编译器缺失，`setup_env.sh` 会自动安装；也可以按平台手动安装：
+
+```bash
+# macOS
+brew tap messense/macos-cross-toolchains
+brew install aarch64-unknown-linux-gnu
+
+# Debian / Ubuntu
+sudo apt-get install -y gcc-aarch64-linux-gnu
+
+# Fedora / RHEL
+sudo dnf install -y gcc-aarch64-linux-gnu
+
+# Arch Linux
+sudo pacman -S --needed aarch64-linux-gnu-gcc
+
+# openSUSE
+sudo zypper --non-interactive install cross-aarch64-gcc
+```
+
+macOS 安装后命令名为 `aarch64-unknown-linux-gnu-gcc`，`setup_env.sh` 和
+`run_linux_test.sh` 会自动识别并设置对应的 `CROSS_COMPILE` 前缀。macOS 上
+`setup_env.sh` 还会自动安装 GNU 工具链和 `bee-headers`（提供 Linux 内核 host
+编译需要的 `elf.h` / `byteswap.h` / `endian.h`）。
+
+### 通用 framebuffer 显示扩展
+
+配置里加一段 `display` 后，生成的 `arti-rtl.c` 会包含 `GraphicHwOps`，并暴露一块
+guest 可写的 framebuffer。显示设备在 `0x0B000000`，framebuffer 默认在
+`0x0B100000`，格式为 32bpp `a8r8g8b8`。ARTI 还会自动往 virt 设备树里加
+`/framebuffer` 节点（`simple-framebuffer`），Linux 开启
+`CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` 后即可用作启动显示。
+
+```yaml
+display:
+  enabled: true
+  width: 1024
+  height: 768
+  format: a8r8g8b8
+  framebuffer_offset: 0x100000
+  framebuffer_size: 0x800000
+```
+
+一键环境开启显示版本：
+
+```bash
+ARTI_DISPLAY=1 ./examples/linux_arti_driver/run.sh
+```
+
+Debian 环境默认打开 QEMU 图形窗口（macOS 使用 Cocoa），可以用 `QEMU_DISPLAY`
+覆盖，例如 `QEMU_DISPLAY=none` 保持无头运行：
+
+```bash
+QEMU_DISPLAY=cocoa ./examples/linux_arti_driver/run.sh debian
+QEMU_DISPLAY=none  ./examples/linux_arti_driver/run.sh debian
+```
+
+也可以直接用示例配置生成：
+
+```bash
+PYTHONPATH=src python3 -m arti.cli generate \
+  examples/simple_fb/config.yaml --output /tmp/simple_fb
 ```
 
 原生 QEMU 源码目录由环境变量 `$QEMU_SRC` 指定，已编译的 QEMU 位于 `/tmp/qemu-arti-build/qemu-system-aarch64`。设置变量后重新构建：

@@ -294,6 +294,11 @@ def generate_project(config: Config, signature: ModuleSignature, inference: dict
         raise ValueError("remote-port and vfio-user are unsupported; use qemu-sysbus with upstream QEMU")
     if config.mode not in ("local", "qemu-sysbus", "qemu-embedded"):
         raise ValueError("bridge.mode must be local, qemu-sysbus, or qemu-embedded")
+    if config.display_enabled:
+        if config.display_format != "a8r8g8b8":
+            raise ValueError("display.format currently supports only a8r8g8b8")
+        if config.display_framebuffer_size < config.display_width * config.display_height * 4:
+            raise ValueError("display.framebuffer_size is too small for width/height")
     root = Path(output)
     if config.data_width < 8 or config.data_width > 64 or config.data_width % 8:
         raise ValueError("bridge.data_width must be a byte-aligned value between 8 and 64")
@@ -355,6 +360,9 @@ exec "$root_dir/build/cmake/cosim"
         remote_cmake = ""
     cmake = f'''cmake_minimum_required(VERSION 3.16)
 project({config.project_name} LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
 find_package(verilator REQUIRED HINTS $ENV{{VERILATOR_ROOT}})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMC REQUIRED IMPORTED_TARGET systemc)
