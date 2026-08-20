@@ -1,0 +1,13 @@
+# build artifacts and generated files only
+.tmp_*/
+.tmp_versions/
+source/
+*.ko
+*.mod
+*.mod.c
+*.o
+*.cmd
+.*.cmd
+Module.symvers
+modules.order
+cloud-init/user-data
