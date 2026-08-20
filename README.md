@@ -2,13 +2,14 @@
 
 ARTI is the initial implementation of the automatic RTL-to-QEMU integration
 framework described in `design_report.md`. The current M1 slice
-parses ANSI-style Verilog top-level ports, ranks five standard bus protocols, and
-generates a SystemC/Verilator project for an AXI-Lite target. With an RTL design
-as the input, users can quickly run full-system simulation or functional trials:
-the generated RTL model can be integrated into QEMU as an `arti-rtl` SysBus
-device; in embedded mode, Verilated RTL is compiled directly into QEMU so a
-Linux guest can exercise the RTL through MMIO without an external cosim process
-or Unix socket.
+parses ANSI-style Verilog top-level ports, ranks five standard bus protocols
+(AXI-Lite, AXI4, AHB, APB, and AXI-Stream), and generates both a
+SystemC/Verilator co-simulation project and an embedded QEMU device model for
+the inferred protocol. With an RTL design as the input, users can quickly run
+full-system simulation or functional trials: the generated RTL model can be
+integrated into QEMU as an `arti-rtl` SysBus device; in embedded mode, Verilated
+RTL is compiled directly into QEMU so a Linux guest can exercise the RTL through
+MMIO without an external cosim process or Unix socket.
 
 ## Quick start (one-click)
 
