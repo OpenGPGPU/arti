@@ -570,6 +570,26 @@ SKIP_GENERIC_TEST=1 \
   ./examples/linux_arti_driver/run_linux_test.sh
 ```
 
+The harness reads the module's `depends=` metadata and automatically stages matching
+dependency modules from `LINUX_BUILD` before loading the external driver. If a dependency
+is outside the kernel build tree, provide a colon-separated search list:
+
+```bash
+DRIVER_KO=/tmp/my_gpu-ko/my_gpu.ko \
+DRIVER_DEPS=/path/to/vendor_dep.ko:/path/to/another_dep.ko \
+DRIVER_MARKER='MY GPU PASS' \
+SKIP_GENERIC_TEST=1 \
+  ./examples/linux_arti_driver/run_linux_test.sh
+```
+
+For the repository reference DRM driver, use the reference mode so the matching RTL and
+device-tree profile are selected explicitly:
+
+```bash
+GPU_REFERENCE=1 ARTI_DISPLAY=1 GPU_DRM_TEST=1 \
+  ./examples/linux_arti_driver/run_linux_test.sh
+```
+
 The driver's device-tree compatible and RTL are configured separately in an
 `integration.yaml` profile. The helper intentionally knows nothing about the driver's
 ABI or source-tree layout beyond standard Linux external-module conventions.

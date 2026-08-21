@@ -43,6 +43,30 @@ static int load_module(const char *path, const char *options, const char *name) 
     return ret;
 }
 
+static void load_external_dependencies(void) {
+    char manifest[4096];
+    int fd = open("/arti_driver_deps", O_RDONLY);
+    ssize_t count;
+    size_t start = 0;
+
+    if (fd < 0)
+        return;
+    count = read(fd, manifest, sizeof(manifest) - 1);
+    close(fd);
+    if (count <= 0)
+        return;
+    manifest[count] = 0;
+
+    for (size_t i = 0; i <= (size_t)count; i++) {
+        if (manifest[i] != '\n' && manifest[i] != 0)
+            continue;
+        manifest[i] = 0;
+        if (i > start)
+            load_module(manifest + start, "", manifest + start);
+        start = i + 1;
+    }
+}
+
 int main(void) {
     /* Open console for output */
     int console = open("/dev/console", O_WRONLY);
@@ -73,8 +97,10 @@ int main(void) {
     /* An externally supplied driver owns the device when present. Its ABI and
      * compatible string are intentionally unknown to this generic harness. */
     int external_driver = access("/arti_driver.ko", F_OK) == 0;
-    if (external_driver)
+    if (external_driver) {
+        load_external_dependencies();
         load_module("/arti_driver.ko", "", "arti_driver");
+    }
 
     /* Reference GPU drivers are opt-in and are only used when no external
      * driver was supplied. */

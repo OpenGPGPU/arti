@@ -26,6 +26,7 @@ SERIAL_LOG="$WORK/serial.log"
 GPU_DRM_TEST="${GPU_DRM_TEST:-0}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
 DRIVER_KO="${DRIVER_KO:-}"
+DRIVER_DEPS="${DRIVER_DEPS:-}"
 DRIVER_MARKER="${DRIVER_MARKER:-ARTI EXTERNAL DRIVER PASS}"
 ARTI_DISPLAY="${ARTI_DISPLAY:-0}"
 
@@ -61,6 +62,7 @@ echo "QEMU     : $QEMU"
 echo "KERNEL   : $KERNEL"
 echo "GPU ref  : $GPU_REFERENCE"
 [ -z "$DRIVER_KO" ] || echo "Driver   : $DRIVER_KO (marker: $DRIVER_MARKER)"
+[ -z "$DRIVER_DEPS" ] || echo "Deps     : $DRIVER_DEPS"
 echo ""
 
 # 0. Check prerequisites
@@ -120,6 +122,7 @@ echo ""
 echo "--- building initramfs ---"
 mkdir -p "$WORK/proc" "$WORK/sys" "$WORK/dev"
 rm -f "$WORK/arti_rtl_test.ko" "$WORK/arti_driver.ko" "$WORK/arti_gpu_probe.ko" \
+      "$WORK/arti_driver_deps" "$WORK"/arti_dep_*.ko \
       "$WORK/arti_gpu_drm.ko" "$WORK/backlight.ko" "$WORK/drm.ko" \
       "$WORK/drm_kms_helper.ko" "$WORK/drm_client_lib.ko" \
       "$WORK/drm_shmem_helper.ko"
@@ -141,7 +144,55 @@ elif [ "$GPU_REFERENCE" = "1" ]; then
     [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] || { echo "FAIL: reference GPU probe module not found"; exit 1; }
     cp "$SCRIPT_DIR/arti_gpu_probe.ko" "$WORK/"
 fi
-[ -z "$DRIVER_KO" ] || cp "$DRIVER_KO" "$WORK/arti_driver.ko"
+if [ -n "$DRIVER_KO" ]; then
+    STAGED_DEP_NAMES=""
+
+    dependency_path() {
+        local name="$1" candidate
+        local -a candidates=()
+        IFS=: read -r -a candidates <<< "$DRIVER_DEPS"
+        for candidate in "${candidates[@]-}"; do
+            [ -n "$candidate" ] || continue
+            if [ "$(basename "$candidate" .ko)" = "$name" ] && [ -f "$candidate" ]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+        find "$LINUX_BUILD" -type f -name "$name.ko" -print -quit 2>/dev/null
+    }
+
+    stage_dependency() {
+        local name="$1" path dep_line dep dep_path
+        case ",$STAGED_DEP_NAMES," in
+            *,"$name",*) return 0 ;;
+        esac
+        path="$(dependency_path "$name")"
+        [ -n "$path" ] || { echo "FAIL: dependency $name.ko not found; set DRIVER_DEPS"; exit 1; }
+        dep_line="$(strings "$path" | sed -n 's/^depends=//p' | head -1 || true)"
+        if [ -n "$dep_line" ]; then
+            IFS=',' read -r -a deps <<< "$dep_line"
+            for dep in "${deps[@]-}"; do
+                dep="${dep//[[:space:]]/}"
+                [ -n "$dep" ] || continue
+                stage_dependency "$dep"
+            done
+        fi
+        cp "$path" "$WORK/arti_dep_${name}.ko"
+        printf '/arti_dep_%s.ko\n' "$name" >> "$WORK/arti_driver_deps"
+        STAGED_DEP_NAMES="${STAGED_DEP_NAMES:+$STAGED_DEP_NAMES,}$name"
+    }
+
+    driver_dep_line="$(strings "$DRIVER_KO" | sed -n 's/^depends=//p' | head -1 || true)"
+    if [ -n "$driver_dep_line" ]; then
+        IFS=',' read -r -a driver_deps <<< "$driver_dep_line"
+        for dep in "${driver_deps[@]-}"; do
+            dep="${dep//[[:space:]]/}"
+            [ -n "$dep" ] || continue
+            stage_dependency "$dep"
+        done
+    fi
+    cp "$DRIVER_KO" "$WORK/arti_driver.ko"
+fi
 ( cd "$WORK" && find . | cpio -o -H newc 2>/dev/null ) | gzip > "$WORK/initramfs.cpio.gz"
 echo "--- initramfs built ($(wc -c < "$WORK/initramfs.cpio.gz") bytes) ---"
 
