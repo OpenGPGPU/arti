@@ -27,6 +27,7 @@ GPU_DRM_TEST="${GPU_DRM_TEST:-0}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
 DRIVER_KO="${DRIVER_KO:-}"
 DRIVER_DEPS="${DRIVER_DEPS:-}"
+DRIVER_MANIFEST="${DRIVER_MANIFEST:-}"
 DRIVER_MARKER="${DRIVER_MARKER:-ARTI EXTERNAL DRIVER PASS}"
 ARTI_DISPLAY="${ARTI_DISPLAY:-0}"
 
@@ -62,6 +63,7 @@ echo "QEMU     : $QEMU"
 echo "KERNEL   : $KERNEL"
 echo "GPU ref  : $GPU_REFERENCE"
 [ -z "$DRIVER_KO" ] || echo "Driver   : $DRIVER_KO (marker: $DRIVER_MARKER)"
+[ -z "$DRIVER_MANIFEST" ] || [ ! -f "$DRIVER_MANIFEST" ] || echo "Manifest : $DRIVER_MANIFEST"
 [ -z "$DRIVER_DEPS" ] || echo "Deps     : $DRIVER_DEPS"
 echo ""
 
@@ -109,6 +111,25 @@ KERNEL_RELEASE_FILE="$LINUX_BUILD/include/config/kernel.release"
 KERNEL_RELEASE=""
 if [ -f "$KERNEL_RELEASE_FILE" ]; then
     KERNEL_RELEASE="$(tr -d '[:space:]' < "$KERNEL_RELEASE_FILE")"
+fi
+
+if [ -n "$DRIVER_KO" ]; then
+    DRIVER_MANIFEST="${DRIVER_MANIFEST:-${DRIVER_KO%.ko}.deps}"
+    if [ -f "$DRIVER_MANIFEST" ]; then
+        manifest_release="$(sed -n 's/^kernel_release=//p' "$DRIVER_MANIFEST" | head -1)"
+        if [ -n "$manifest_release" ] && [ -n "$KERNEL_RELEASE" ] && \
+           [ "$manifest_release" != "$KERNEL_RELEASE" ]; then
+            echo "FAIL: driver manifest kernel release mismatch: $manifest_release != $KERNEL_RELEASE"
+            echo "  Rebuild the driver with build_driver.sh against $LINUX_BUILD"
+            exit 1
+        fi
+        while IFS='=' read -r manifest_key manifest_value; do
+            [ "$manifest_key" = "dependency" ] || continue
+            manifest_path="${manifest_value#*:}"
+            [ -f "$manifest_path" ] || continue
+            DRIVER_DEPS="${DRIVER_DEPS:+$DRIVER_DEPS:}$manifest_path"
+        done < "$DRIVER_MANIFEST"
+    fi
 fi
 
 module_vermagic() {

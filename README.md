@@ -611,6 +611,10 @@ SKIP_GENERIC_TEST=1 \
   ./examples/linux_arti_driver/run_linux_test.sh
 ```
 
+When the driver was built with `build_driver.sh`, the harness automatically reads the
+matching `<driver>.deps` manifest next to the `.ko` and uses its dependency paths. Set
+`DRIVER_MANIFEST` to use a manifest at another location.
+
 Before starting QEMU, the harness checks the external module and each staged dependency
 against `LINUX_BUILD/include/config/kernel.release`. A vermagic mismatch or missing
 dependency therefore fails immediately with the module path that needs rebuilding.

@@ -266,7 +266,12 @@ class MultiProtocolTest(unittest.TestCase):
             fake_bin = root / "bin"
             fake_bin.mkdir()
             fake_compiler = fake_bin / "aarch64-linux-gnu-gcc"
-            fake_compiler.write_text("#!/bin/sh\nexit 0\n")
+            fake_compiler.write_text(
+                "#!/bin/sh\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  if [ \"$1\" = \"-o\" ]; then : > \"$2\"; shift 2; else shift; fi\n"
+                "done\n"
+            )
             fake_compiler.chmod(0o755)
 
             linux_build = root / "linux-build"
@@ -306,6 +311,66 @@ class MultiProtocolTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("vermagic mismatch", output)
             self.assertNotIn("QEMU SHOULD NOT RUN", output)
+
+    def test_linux_harness_reads_driver_dependency_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_compiler = fake_bin / "aarch64-linux-gnu-gcc"
+            fake_compiler.write_text(
+                "#!/bin/sh\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  if [ \"$1\" = \"-o\" ]; then : > \"$2\"; shift 2; else shift; fi\n"
+                "done\n"
+            )
+            fake_compiler.chmod(0o755)
+
+            linux_build = root / "linux-build"
+            release_file = linux_build / "include/config/kernel.release"
+            release_file.parent.mkdir(parents=True)
+            release_file.write_text("expected-release\n")
+            (linux_build / "Makefile").write_text("# test fixture\n")
+
+            driver = root / "my_gpu.ko"
+            driver.write_text("vermagic=expected-release SMP aarch64\ndepends=helper\n")
+            dependency = root / "helper.ko"
+            dependency.write_text("vermagic=wrong-release SMP aarch64\n")
+            (root / "my_gpu.deps").write_text(
+                "module=my_gpu.ko\n"
+                "kernel_release=expected-release\n"
+                "depends=helper\n"
+                f"dependency=helper:{dependency}\n"
+            )
+
+            qemu = root / "qemu-system-aarch64"
+            qemu.write_text("#!/bin/sh\nexit 0\n")
+            qemu.chmod(0o755)
+            kernel = root / "Image"
+            kernel.write_bytes(b"kernel")
+            environment = {
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "QEMU": str(qemu),
+                "KERNEL": str(kernel),
+                "LINUX_BUILD": str(linux_build),
+                "DRIVER_KO": str(driver),
+                "SKIP_GENERIC_TEST": "1",
+                "WORK": str(root / "work"),
+            }
+            result = subprocess.run(
+                ["bash", str(ROOT / "examples/linux_arti_driver/run_linux_test.sh")],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("vermagic mismatch for helper.ko", output)
+            self.assertNotIn("dependency helper.ko not found", output)
 
     @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
                          "Icarus Verilog is unavailable")
