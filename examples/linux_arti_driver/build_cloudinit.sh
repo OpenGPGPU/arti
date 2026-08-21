@@ -5,6 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/integration_env.sh"
+ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 CI_DIR="$SCRIPT_DIR/cloud-init"
 KO="${KO:-$SCRIPT_DIR/arti_rtl_test.ko}"
 GPU_KO="${GPU_KO:-$SCRIPT_DIR/arti_gpu_probe.ko}"

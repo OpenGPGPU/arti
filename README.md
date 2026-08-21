@@ -48,6 +48,33 @@ automatically selects the package manager for the current OS to install missing
 dependencies: Homebrew on macOS (including the AArch64 Linux cross-toolchain tap), and
 apt/dnf/yum/pacman/zypper/apk on Linux.
 
+### Integration profiles
+
+The Linux/QEMU harness reads `examples/linux_arti_driver/integration.yaml` by default.
+The file combines the normal ARTI RTL/bridge/display configuration with integration
+metadata:
+
+- `integration.irq_base` and `integration.dt_compat` describe the generated device tree
+- `integration.driver_ko` and `integration.driver_marker` describe an optional external
+  Linux module test
+- `integration.skip_generic_test` controls the generic smoke module
+- `integration.gpu_reference` identifies the repository's reference-only GPU example
+
+Use the reference profile without setting separate GPU variables:
+
+```bash
+INTEGRATION_CONFIG=examples/linux_arti_driver/integration_gpu_reference.yaml \
+  ./examples/linux_arti_driver/setup_env.sh
+
+INTEGRATION_CONFIG=examples/linux_arti_driver/integration_gpu_reference.yaml \
+  ./examples/linux_arti_driver/run_linux_test.sh
+```
+
+For a real GPU project, copy the generic profile and change `rtl`, `bridge`,
+`integration.dt_compat`, and `integration.driver_ko` to match the external RTL and
+driver. Environment variables such as `ARTI_MMIO_BASE` and `DRIVER_KO` remain supported
+as command-line overrides.
+
 ## Quick start
 
 No third-party Python package is required:

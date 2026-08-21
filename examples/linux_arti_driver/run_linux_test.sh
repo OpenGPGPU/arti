@@ -14,6 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+. "$SCRIPT_DIR/integration_env.sh"
+arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
 QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
 KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"

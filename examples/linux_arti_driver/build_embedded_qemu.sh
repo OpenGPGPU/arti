@@ -20,6 +20,7 @@ QEMU_SRC="${QEMU_SRC:-$(cd "$ARTI_DIR/../qemu" && pwd)}"
 QEMU_BUILD="${QEMU_BUILD:-/tmp/qemu-arti-build}"
 OUTPUT="${OUTPUT:-/tmp/arti-embedded-gen}"
 ARTI_MMIO_BASE="${ARTI_MMIO_BASE:-0x0B000000}"
+INTEGRATION_CONFIG="${INTEGRATION_CONFIG:-}"
 
 # Resolve RTL to absolute path (relative paths are resolved from ARTI_DIR)
 if [[ "$RTL_INPUT" = /* ]]; then
@@ -38,6 +39,14 @@ echo ""
 CONFIG="$OUTPUT/config.yaml"
 mkdir -p "$OUTPUT"
 rm -rf "$OUTPUT/generated"
+if [ -n "$INTEGRATION_CONFIG" ]; then
+    if [[ "$INTEGRATION_CONFIG" = /* ]]; then
+        CONFIG="$INTEGRATION_CONFIG"
+    else
+        CONFIG="$(cd "$ARTI_DIR" && realpath "$INTEGRATION_CONFIG")"
+    fi
+    [ -f "$CONFIG" ] || { echo "FAIL: integration config not found at $CONFIG"; exit 1; }
+else
 cat > "$CONFIG" << YAMLEOF
 project:
   name: ${TOP}_embedded
@@ -63,6 +72,7 @@ display:
   framebuffer_offset: ${ARTI_DISPLAY_FB_OFFSET:-0x100000}
   framebuffer_size: ${ARTI_DISPLAY_FB_SIZE:-0x800000}
 YAMLEOF
+fi
 
 PYTHONPATH="$ARTI_DIR/src" python3 -m arti.cli generate "$CONFIG" --output "$OUTPUT/generated"
 echo "=== arti generate done ==="

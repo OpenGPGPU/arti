@@ -22,6 +22,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+. "$SCRIPT_DIR/integration_env.sh"
+ARTI_RTL_TOP_FROM_ENV="${ARTI_RTL_TOP+x}"
+ARTI_RTL_SOURCE_FROM_ENV="${ARTI_RTL_SOURCE+x}"
+ARTI_DT_COMPAT_FROM_ENV="${ARTI_DT_COMPAT+x}"
+arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 WORK_DIR="${WORK_DIR:-/tmp}"
 QEMU_SRC="${QEMU_SRC:-}"
 # Auto-detect existing QEMU source
@@ -61,6 +66,12 @@ CLOUD_INIT_ISO="${CLOUD_INIT_ISO:-$WORK_DIR/cloud-init.iso}"
 QEMU_VERSION="${QEMU_VERSION:-11.1.0}"
 LINUX_VERSION="${LINUX_VERSION:-7.2}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
+if [ "$GPU_REFERENCE" = "1" ] && [ "$INTEGRATION_CONFIG_EXPLICIT" = "0" ] && \
+   [ -z "$ARTI_RTL_TOP_FROM_ENV" ] && [ -z "$ARTI_RTL_SOURCE_FROM_ENV" ]; then
+    ARTI_RTL_TOP="arti_gpu"
+    ARTI_RTL_SOURCE="$ARTI_DIR/examples/arti_gpu/arti_gpu.v"
+    [ -n "$ARTI_DT_COMPAT_FROM_ENV" ] || ARTI_DT_COMPAT="arti,rtl-gpu;arti,rtl"
+fi
 if [ "$GPU_REFERENCE" = "1" ]; then
     ARTI_RTL_TOP="${ARTI_RTL_TOP:-arti_gpu}"
     ARTI_RTL_SOURCE="${ARTI_RTL_SOURCE:-$ARTI_DIR/examples/arti_gpu/arti_gpu.v}"

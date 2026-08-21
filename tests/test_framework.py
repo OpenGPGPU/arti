@@ -10,6 +10,7 @@ from pathlib import Path
 
 from arti.cli import main
 from arti.inference import infer_protocol
+from arti.integration import load_integration
 from arti.parser import parse_verilog
 
 
@@ -213,6 +214,21 @@ class MultiProtocolTest(unittest.TestCase):
             self.assertIn("arti_rtl_model_check_irq", wrapper)
             self.assertIn("GraphicHwOps", stub)
             self.assertIn("ARTI_MMIO_EXTENT", stub)
+
+    def test_load_generic_integration_profile(self):
+        integration = load_integration(ROOT / "examples/linux_arti_driver/integration.yaml")
+        self.assertEqual(integration.config.top_module, "simple_gpio")
+        self.assertEqual(integration.config.base_address, 0x0B000000)
+        self.assertEqual(integration.dt_compat, ("arti,rtl",))
+        self.assertFalse(integration.gpu_reference)
+
+    def test_load_gpu_integration_profile_preserves_compatible_commas(self):
+        integration = load_integration(
+            ROOT / "examples/linux_arti_driver/integration_gpu_reference.yaml"
+        )
+        self.assertEqual(integration.config.top_module, "arti_gpu")
+        self.assertEqual(integration.dt_compat, ("arti,rtl-gpu", "arti,rtl"))
+        self.assertTrue(integration.gpu_reference)
 
     @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
                          "Icarus Verilog is unavailable")
