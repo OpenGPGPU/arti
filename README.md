@@ -541,6 +541,7 @@ accepts either a driver directory with its own Kbuild/Makefile or a single C sou
 # Existing multi-file driver directory
 ./examples/linux_arti_driver/build_driver.sh \
   --dir /path/to/my_gpu_driver \
+  --module my_gpu \
   --output /tmp/my_gpu-ko
 
 # Single source driver
@@ -552,8 +553,22 @@ accepts either a driver directory with its own Kbuild/Makefile or a single C sou
 
 The helper automatically uses `/tmp/arti-linux-build`, detects the AArch64 cross
 compiler, invokes the kernel's out-of-tree module build, and checks the resulting
-module `vermagic` against `kernel.release`. Override `LINUX_BUILD` or
+module `vermagic` against `kernel.release`. `--module` is useful when a driver
+directory contains several Kbuild targets; without it, all produced `.ko` files are
+copied. The helper also writes `<module>.deps` with the kernel release and dependency
+paths. Override `LINUX_BUILD` or
 `CROSS_COMPILE` when using a different kernel build:
+
+For the repository's reference modules, pass `GPU_REFERENCE=1` because their Makefile
+keeps them out of the default generic build:
+
+```bash
+GPU_REFERENCE=1 \
+  ./examples/linux_arti_driver/build_driver.sh \
+    --dir examples/linux_arti_driver \
+    --module arti_gpu_drm \
+    --output /tmp/arti-gpu-ko
+```
 
 ```bash
 LINUX_BUILD=/path/to/linux-build \

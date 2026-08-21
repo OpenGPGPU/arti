@@ -3,7 +3,7 @@
 #
 # Examples:
 #   ./build_driver.sh --source /path/to/my_gpu.c --name my_gpu
-#   ./build_driver.sh --dir /path/to/my_gpu_driver --output /tmp/my_gpu-ko
+#   ./build_driver.sh --dir /path/to/my_gpu_driver --module my_gpu --output /tmp/my_gpu-ko
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,6 +12,8 @@ LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
 DRIVER_DIR="${DRIVER_DIR:-}"
 DRIVER_SRC="${DRIVER_SRC:-}"
 DRIVER_NAME="${DRIVER_NAME:-}"
+DRIVER_MODULE="${DRIVER_MODULE:-}"
+GPU_REFERENCE="${GPU_REFERENCE:-0}"
 OUTPUT="${OUTPUT:-/tmp/arti-driver-ko}"
 HOSTCFLAGS="${HOSTCFLAGS:-}"
 
@@ -19,10 +21,10 @@ usage() {
     cat >&2 <<'EOF'
 Usage:
   build_driver.sh --source DRIVER.c --name MODULE [--output DIR]
-  build_driver.sh --dir DRIVER_DIR [--output DIR]
+  build_driver.sh --dir DRIVER_DIR [--module MODULE] [--output DIR]
 
 Environment overrides: LINUX_BUILD, CROSS_COMPILE, DRIVER_SRC, DRIVER_NAME,
-DRIVER_DIR, OUTPUT.
+DRIVER_DIR, DRIVER_MODULE, GPU_REFERENCE, OUTPUT.
 EOF
     exit 2
 }
@@ -32,6 +34,7 @@ while [ "$#" -gt 0 ]; do
         --source) [ "$#" -ge 2 ] || usage; DRIVER_SRC="$2"; shift 2 ;;
         --name) [ "$#" -ge 2 ] || usage; DRIVER_NAME="$2"; shift 2 ;;
         --dir) [ "$#" -ge 2 ] || usage; DRIVER_DIR="$2"; shift 2 ;;
+        --module) [ "$#" -ge 2 ] || usage; DRIVER_MODULE="$2"; shift 2 ;;
         --output) [ "$#" -ge 2 ] || usage; OUTPUT="$2"; shift 2 ;;
         --help|-h) usage ;;
         *) usage ;;
@@ -69,6 +72,13 @@ if [ -n "$DRIVER_SRC" ]; then
 else
     DRIVER_DIR="$(resolve_path "$DRIVER_DIR")"
     [ -d "$DRIVER_DIR" ] || { echo "FAIL: driver directory not found: $DRIVER_DIR" >&2; exit 1; }
+fi
+
+if [ -n "$DRIVER_MODULE" ]; then
+    DRIVER_MODULE="$(basename "$DRIVER_MODULE" .ko)"
+    case "$DRIVER_MODULE" in
+        ''|*[!A-Za-z0-9_+-]*) echo "FAIL: invalid DRIVER_MODULE: $DRIVER_MODULE" >&2; exit 2 ;;
+    esac
 fi
 
 if [ -n "${CROSS_COMPILE:-}" ]; then
@@ -120,14 +130,27 @@ echo "Kernel build : $LINUX_BUILD"
 echo "Kernel       : $KERNEL_RELEASE"
 echo "Compiler     : $CROSS_GCC"
 echo "Output       : $OUTPUT"
+[ -z "$DRIVER_MODULE" ] || echo "Module       : $DRIVER_MODULE.ko"
+echo "GPU reference: $GPU_REFERENCE"
 
+BUILD_TARGET="modules"
+[ -z "$DRIVER_MODULE" ] || BUILD_TARGET="$DRIVER_MODULE.ko"
 "$MAKE" -C "$LINUX_BUILD" M="$BUILD_DIR" ARCH=arm64 \
-    CROSS_COMPILE="$CROSS_COMPILE" HOSTCFLAGS="$HOSTCFLAGS" modules
+    CROSS_COMPILE="$CROSS_COMPILE" GPU_REFERENCE="$GPU_REFERENCE" \
+    HOSTCFLAGS="$HOSTCFLAGS" "$BUILD_TARGET"
 
 modules=()
-while IFS= read -r module; do
-    modules+=("$module")
-done < <(find "$BUILD_DIR" -maxdepth 1 -type f -name '*.ko' -print)
+if [ -n "$DRIVER_MODULE" ]; then
+    [ -f "$BUILD_DIR/$DRIVER_MODULE.ko" ] || {
+        echo "FAIL: requested module was not produced: $DRIVER_MODULE.ko" >&2
+        exit 1
+    }
+    modules+=("$BUILD_DIR/$DRIVER_MODULE.ko")
+else
+    while IFS= read -r module; do
+        modules+=("$module")
+    done < <(find "$BUILD_DIR" -maxdepth 1 -type f -name '*.ko' -print)
+fi
 [ "${#modules[@]}" -gt 0 ] || { echo "FAIL: no .ko was produced" >&2; exit 1; }
 
 mkdir -p "$OUTPUT"
@@ -139,6 +162,27 @@ echo "=== Driver modules built ==="
 for module in "${modules[@]}"; do
     artifact="$OUTPUT/$(basename "$module")"
     echo "  $artifact"
+    module_name="$(basename "$module" .ko)"
+    depends="$(strings "$artifact" 2>/dev/null | sed -n 's/^depends=//p' | head -1)"
+    manifest="$OUTPUT/$module_name.deps"
+    {
+        echo "module=$(basename "$artifact")"
+        echo "kernel_release=$KERNEL_RELEASE"
+        echo "depends=${depends}"
+    } > "$manifest"
+    if [ -n "$depends" ]; then
+        IFS=',' read -r -a dependency_names <<< "$depends"
+        for dependency in "${dependency_names[@]-}"; do
+            dependency="${dependency//[[:space:]]/}"
+            [ -n "$dependency" ] || continue
+            dependency_path="$(find "$LINUX_BUILD" -type f -name "$dependency.ko" -print -quit 2>/dev/null || true)"
+            if [ -n "$dependency_path" ]; then
+                echo "dependency=$dependency:$dependency_path" >> "$manifest"
+            else
+                echo "WARNING: dependency $dependency.ko was not found under $LINUX_BUILD" >&2
+            fi
+        done
+    fi
     actual_release="$(strings "$artifact" 2>/dev/null | sed -n 's/^vermagic=//p' | awk '{print $1}' | head -1)"
     if command -v modinfo >/dev/null 2>&1; then
         actual_release="$(modinfo -F vermagic "$artifact" 2>/dev/null | awk '{print $1}')"
@@ -148,8 +192,10 @@ for module in "${modules[@]}"; do
         exit 1
     }
     [ "$actual_release" = "$KERNEL_RELEASE" ] || {
-            echo "FAIL: vermagic mismatch: $actual_release != $KERNEL_RELEASE" >&2
-            exit 1
+        echo "FAIL: vermagic mismatch: $actual_release != $KERNEL_RELEASE" >&2
+        exit 1
     }
+    echo "  Dependencies: ${depends:-none}"
+    echo "  Manifest    : $manifest"
 done
 echo "Kernel release match: $KERNEL_RELEASE"
