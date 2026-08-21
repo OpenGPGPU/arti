@@ -39,7 +39,11 @@ if [ -n "$DRIVER_KO" ] && [ "$GPU_REFERENCE" = "1" ]; then
     echo "FAIL: choose DRIVER_KO or GPU_REFERENCE=1; they must not bind the same DT node"
     exit 1
 fi
-SKIP_GENERIC_TEST="${SKIP_GENERIC_TEST:-0}"
+if [ "$GPU_REFERENCE" = "1" ] || [ -n "$DRIVER_KO" ]; then
+    SKIP_GENERIC_TEST="${SKIP_GENERIC_TEST:-1}"
+else
+    SKIP_GENERIC_TEST="${SKIP_GENERIC_TEST:-0}"
+fi
 
 if [ "$(uname -s)" = "Darwin" ]; then
     case ":$PATH:" in
@@ -102,8 +106,8 @@ if [ "$SKIP_GENERIC_TEST" != "1" ] && [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ]; t
     echo "  Build it first (see README section 5.3), or set SKIP_GENERIC_TEST=1 with DRIVER_KO"
     exit 1
 fi
-if [ "$SKIP_GENERIC_TEST" = "1" ] && [ -z "$DRIVER_KO" ]; then
-    echo "FAIL: SKIP_GENERIC_TEST=1 requires DRIVER_KO"
+if [ "$SKIP_GENERIC_TEST" = "1" ] && [ -z "$DRIVER_KO" ] && [ "$GPU_REFERENCE" != "1" ]; then
+    echo "FAIL: SKIP_GENERIC_TEST=1 requires DRIVER_KO or GPU_REFERENCE=1"
     exit 1
 fi
 
@@ -113,7 +117,7 @@ echo ""
 # 1. Build the init binary and initramfs
 echo "--- building initramfs ---"
 mkdir -p "$WORK/proc" "$WORK/sys" "$WORK/dev"
-rm -f "$WORK/arti_driver.ko" "$WORK/arti_gpu_probe.ko" \
+rm -f "$WORK/arti_rtl_test.ko" "$WORK/arti_driver.ko" "$WORK/arti_gpu_probe.ko" \
       "$WORK/arti_gpu_drm.ko" "$WORK/backlight.ko" "$WORK/drm.ko" \
       "$WORK/drm_kms_helper.ko" "$WORK/drm_client_lib.ko" \
       "$WORK/drm_shmem_helper.ko"
@@ -160,12 +164,14 @@ echo "=== Serial output (tail) ==="
 tail -12 "$SERIAL_LOG" 2>/dev/null || echo "(no serial output)"
 
 GENERIC_PASS=0
+REFERENCE_PASS=0
 EXTERNAL_PASS=0
 grep -Eq "ARTI LINUX PASS|ARTI GPU ABI PASS" "$SERIAL_LOG" 2>/dev/null && GENERIC_PASS=1
+grep -Eq "ARTI GPU PROBE PASS|ARTI GPU DRM PASS" "$SERIAL_LOG" 2>/dev/null && REFERENCE_PASS=1
 if [ -n "$DRIVER_KO" ] && grep -qF "$DRIVER_MARKER" "$SERIAL_LOG" 2>/dev/null; then
     EXTERNAL_PASS=1
 fi
-if [ "$GENERIC_PASS" = "1" ] || [ "$EXTERNAL_PASS" = "1" ]; then
+if [ "$GENERIC_PASS" = "1" ] || [ "$REFERENCE_PASS" = "1" ] || [ "$EXTERNAL_PASS" = "1" ]; then
     if { [ "$ARTI_DISPLAY" = "1" ] || [ "$ARTI_DISPLAY" = "true" ]; } && \
        ! grep -q "simplefb registered" "$SERIAL_LOG" 2>/dev/null; then
         echo "=== SIMPLEFB TEST FAILED ==="

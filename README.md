@@ -220,8 +220,9 @@ vvp /tmp/arti_gpu_tb.vvp
 The `test` and `interactive` modes of `run.sh` always run with `-display none` and exit
 after the test or shell session, so `ARTI_DISPLAY` alone does not open a graphics window.
 The default Linux test only loads `arti_rtl_test.ko`. Enable the reference modules
-explicitly with `GPU_REFERENCE=1`; this also defaults the DT compatible list to
-`arti,rtl-gpu;arti,rtl`.
+explicitly with `GPU_REFERENCE=1`; setup then selects `examples/arti_gpu/arti_gpu.v`,
+defaults the DT compatible list to `arti,rtl-gpu;arti,rtl`, and skips the generic smoke
+driver because it writes to the control aperture.
 
 To exercise the DRM takeover path in the same initramfs test, use:
 

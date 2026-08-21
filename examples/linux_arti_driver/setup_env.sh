@@ -60,11 +60,16 @@ CLOUD_INIT_ISO="${CLOUD_INIT_ISO:-$WORK_DIR/cloud-init.iso}"
 # QEMU and Linux versions
 QEMU_VERSION="${QEMU_VERSION:-11.1.0}"
 LINUX_VERSION="${LINUX_VERSION:-7.2}"
-ARTI_RTL_TOP="${ARTI_RTL_TOP:-simple_gpio}"
-ARTI_RTL_SOURCE="${ARTI_RTL_SOURCE:-$ARTI_DIR/examples/simple_gpio/simple_gpio.v}"
+GPU_REFERENCE="${GPU_REFERENCE:-0}"
+if [ "$GPU_REFERENCE" = "1" ]; then
+    ARTI_RTL_TOP="${ARTI_RTL_TOP:-arti_gpu}"
+    ARTI_RTL_SOURCE="${ARTI_RTL_SOURCE:-$ARTI_DIR/examples/arti_gpu/arti_gpu.v}"
+else
+    ARTI_RTL_TOP="${ARTI_RTL_TOP:-simple_gpio}"
+    ARTI_RTL_SOURCE="${ARTI_RTL_SOURCE:-$ARTI_DIR/examples/simple_gpio/simple_gpio.v}"
+fi
 ARTI_MMIO_BASE="${ARTI_MMIO_BASE:-0x0B000000}"
 ARTI_IRQ_BASE="${ARTI_IRQ_BASE:-180}"
-GPU_REFERENCE="${GPU_REFERENCE:-0}"
 DRIVER_KO="${DRIVER_KO:-}"
 if [ -z "${ARTI_DT_COMPAT:-}" ]; then
     if [ "$GPU_REFERENCE" = "1" ]; then
