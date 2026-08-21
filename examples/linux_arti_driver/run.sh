@@ -16,7 +16,10 @@ MODE="${1:-test}"
 # Step 1: Ensure environment is set up
 if [ ! -f /tmp/qemu-arti-build/qemu-system-aarch64 ] || \
    [ ! -f /tmp/arti-linux-build/arch/arm64/boot/Image ] || \
-   [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ]; then
+   [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ] || \
+   { [ "${GPU_REFERENCE:-0}" = "1" ] && \
+     [ ! -f "$SCRIPT_DIR/arti_gpu_probe.ko" ]; } || \
+   { [ "${GPU_DRM_TEST:-0}" = "1" ] && [ ! -f "$SCRIPT_DIR/arti_gpu_drm.ko" ]; }; then
     echo "=== Environment not ready, running setup_env.sh ==="
     bash "$SCRIPT_DIR/setup_env.sh"
 fi

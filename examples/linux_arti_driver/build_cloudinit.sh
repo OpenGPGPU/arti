@@ -9,27 +9,35 @@ CI_DIR="$SCRIPT_DIR/cloud-init"
 KO="${KO:-$SCRIPT_DIR/arti_rtl_test.ko}"
 GPU_KO="${GPU_KO:-$SCRIPT_DIR/arti_gpu_probe.ko}"
 DRM_KO="${DRM_KO:-$SCRIPT_DIR/arti_gpu_drm.ko}"
+DRIVER_KO="${DRIVER_KO:-}"
+GPU_REFERENCE="${GPU_REFERENCE:-0}"
 LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
 OUTPUT="${OUTPUT:-/tmp/cloud-init.iso}"
 
 [ -f "$KO" ] || { echo "FAIL: $KO not found"; exit 1; }
+[ "$GPU_REFERENCE" != "1" ] || {
+    [ -f "$GPU_KO" ] || { echo "FAIL: reference GPU probe module not found at $GPU_KO"; exit 1; }
+}
+[ -z "$DRIVER_KO" ] || [ -f "$DRIVER_KO" ] || { echo "FAIL: external driver not found at $DRIVER_KO"; exit 1; }
 command -v xorriso >/dev/null || { echo "FAIL: xorriso not found"; exit 1; }
 command -v python3 >/dev/null || { echo "FAIL: python3 not found"; exit 1; }
 
 echo "=== Building cloud-init ISO ==="
 echo "  .ko      : $KO"
-[ ! -f "$GPU_KO" ] || echo "  GPU .ko  : $GPU_KO"
-[ ! -f "$DRM_KO" ] || echo "  DRM .ko  : $DRM_KO"
+[ "$GPU_REFERENCE" != "1" ] || echo "  GPU .ko  : $GPU_KO"
+[ "$GPU_REFERENCE" != "1" ] || [ ! -f "$DRM_KO" ] || echo "  DRM .ko  : $DRM_KO"
+[ -z "$DRIVER_KO" ] || echo "  Driver   : $DRIVER_KO"
 echo "  Output   : $OUTPUT"
 
 # Generate user-data with base64-embedded .ko files + arti-net.service
 export KO_PATH="$KO"
 export GPU_KO_PATH=""
-[ ! -f "$GPU_KO" ] || export GPU_KO_PATH="$GPU_KO"
+[ "$GPU_REFERENCE" != "1" ] || export GPU_KO_PATH="$GPU_KO"
 export DRM_KO_PATH=""
-[ ! -f "$DRM_KO" ] || export DRM_KO_PATH="$DRM_KO"
+[ "$GPU_REFERENCE" != "1" ] || [ ! -f "$DRM_KO" ] || export DRM_KO_PATH="$DRM_KO"
+export DRIVER_KO_PATH="$DRIVER_KO"
 export DRM_SUPPORT_PATHS="${DRM_SUPPORT_PATHS:-}"
-if [ -f "$DRM_KO" ] && [ -z "$DRM_SUPPORT_PATHS" ]; then
+if [ -n "$DRM_KO_PATH" ] && [ -z "$DRM_SUPPORT_PATHS" ]; then
     for drm_module in backlight drm drm_kms_helper drm_client_lib drm_shmem_helper; do
         drm_path="$(find "$LINUX_BUILD/drivers" -name "$drm_module.ko" -print -quit 2>/dev/null || true)"
         [ -z "$drm_path" ] || DRM_SUPPORT_PATHS="${DRM_SUPPORT_PATHS:+$DRM_SUPPORT_PATHS:}$drm_path"
@@ -58,6 +66,9 @@ if gpu_ko_path:
 drm_ko_path = os.environ.get("DRM_KO_PATH", "")
 if drm_ko_path:
     write_files += module_file(drm_ko_path, "/root/arti_gpu_drm.ko")
+driver_ko_path = os.environ.get("DRIVER_KO_PATH", "")
+if driver_ko_path:
+    write_files += module_file(driver_ko_path, "/root/arti_driver.ko")
 for support_path in filter(None, os.environ.get("DRM_SUPPORT_PATHS", "").split(":")):
     write_files += module_file(support_path, "/root/" + Path(support_path).name)
 

@@ -22,6 +22,24 @@ WORK="${WORK:-/tmp/arti-linux-test}"
 TIMEOUT="${TIMEOUT:-60}"
 SERIAL_LOG="$WORK/serial.log"
 GPU_DRM_TEST="${GPU_DRM_TEST:-0}"
+GPU_REFERENCE="${GPU_REFERENCE:-0}"
+DRIVER_KO="${DRIVER_KO:-}"
+DRIVER_MARKER="${DRIVER_MARKER:-ARTI EXTERNAL DRIVER PASS}"
+ARTI_DISPLAY="${ARTI_DISPLAY:-0}"
+
+if [ "$GPU_DRM_TEST" = "1" ] && [ "$GPU_REFERENCE" != "1" ]; then
+    echo "FAIL: GPU_DRM_TEST=1 requires GPU_REFERENCE=1"
+    exit 1
+fi
+if [ -n "$DRIVER_KO" ] && [ ! -f "$DRIVER_KO" ]; then
+    echo "FAIL: external driver not found at $DRIVER_KO"
+    exit 1
+fi
+if [ -n "$DRIVER_KO" ] && [ "$GPU_REFERENCE" = "1" ]; then
+    echo "FAIL: choose DRIVER_KO or GPU_REFERENCE=1; they must not bind the same DT node"
+    exit 1
+fi
+SKIP_GENERIC_TEST="${SKIP_GENERIC_TEST:-0}"
 
 if [ "$(uname -s)" = "Darwin" ]; then
     case ":$PATH:" in
@@ -35,6 +53,8 @@ echo "=== ARTI Linux driver end-to-end test (embedded model) ==="
 echo "ARTI_DIR : $ARTI_DIR"
 echo "QEMU     : $QEMU"
 echo "KERNEL   : $KERNEL"
+echo "GPU ref  : $GPU_REFERENCE"
+[ -z "$DRIVER_KO" ] || echo "Driver   : $DRIVER_KO (marker: $DRIVER_MARKER)"
 echo ""
 
 # 0. Check prerequisites
@@ -77,7 +97,15 @@ fi
 
 [ -f "$KERNEL" ] || { echo "FAIL: kernel Image not found at $KERNEL"; echo "  Build it first (see README section 5.2)"; exit 1; }
 
-[ -f "$SCRIPT_DIR/arti_rtl_test.ko" ] || { echo "FAIL: arti_rtl_test.ko not found at $SCRIPT_DIR/"; echo "  Build it first (see README section 5.3)"; exit 1; }
+if [ "$SKIP_GENERIC_TEST" != "1" ] && [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ]; then
+    echo "FAIL: arti_rtl_test.ko not found at $SCRIPT_DIR/"
+    echo "  Build it first (see README section 5.3), or set SKIP_GENERIC_TEST=1 with DRIVER_KO"
+    exit 1
+fi
+if [ "$SKIP_GENERIC_TEST" = "1" ] && [ -z "$DRIVER_KO" ]; then
+    echo "FAIL: SKIP_GENERIC_TEST=1 requires DRIVER_KO"
+    exit 1
+fi
 
 echo "--- prerequisites OK ---"
 echo ""
@@ -85,23 +113,29 @@ echo ""
 # 1. Build the init binary and initramfs
 echo "--- building initramfs ---"
 mkdir -p "$WORK/proc" "$WORK/sys" "$WORK/dev"
-rm -f "$WORK/arti_gpu_drm.ko" "$WORK/backlight.ko" "$WORK/drm.ko" \
+rm -f "$WORK/arti_driver.ko" "$WORK/arti_gpu_probe.ko" \
+      "$WORK/arti_gpu_drm.ko" "$WORK/backlight.ko" "$WORK/drm.ko" \
       "$WORK/drm_kms_helper.ko" "$WORK/drm_client_lib.ko" \
       "$WORK/drm_shmem_helper.ko"
 "$CROSS_GCC" -static -O2 \
     -o "$WORK/init" "$SCRIPT_DIR/arti-linux-init.c"
 chmod +x "$WORK/init"
-cp "$SCRIPT_DIR/arti_rtl_test.ko" "$WORK/"
+if [ "$SKIP_GENERIC_TEST" != "1" ]; then
+    cp "$SCRIPT_DIR/arti_rtl_test.ko" "$WORK/"
+fi
 if [ "$GPU_DRM_TEST" = "1" ]; then
+    [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ] || { echo "FAIL: reference GPU DRM module not found"; exit 1; }
     cp "$SCRIPT_DIR/arti_gpu_drm.ko" "$WORK/"
     for drm_module in backlight drm drm_kms_helper drm_client_lib drm_shmem_helper; do
         drm_path="$(find "$LINUX_BUILD/drivers" -name "$drm_module.ko" -print -quit 2>/dev/null || true)"
         [ -n "$drm_path" ] || { echo "FAIL: $drm_module.ko not found under $LINUX_BUILD"; exit 1; }
         cp "$drm_path" "$WORK/"
     done
-else
-    [ ! -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] || cp "$SCRIPT_DIR/arti_gpu_probe.ko" "$WORK/"
+elif [ "$GPU_REFERENCE" = "1" ]; then
+    [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] || { echo "FAIL: reference GPU probe module not found"; exit 1; }
+    cp "$SCRIPT_DIR/arti_gpu_probe.ko" "$WORK/"
 fi
+[ -z "$DRIVER_KO" ] || cp "$DRIVER_KO" "$WORK/arti_driver.ko"
 ( cd "$WORK" && find . | cpio -o -H newc 2>/dev/null ) | gzip > "$WORK/initramfs.cpio.gz"
 echo "--- initramfs built ($(wc -c < "$WORK/initramfs.cpio.gz") bytes) ---"
 
@@ -125,8 +159,15 @@ echo ""
 echo "=== Serial output (tail) ==="
 tail -12 "$SERIAL_LOG" 2>/dev/null || echo "(no serial output)"
 
-if grep -Eq "ARTI LINUX PASS|ARTI GPU ABI PASS" "$SERIAL_LOG" 2>/dev/null; then
-    if ! grep -q "simplefb registered" "$SERIAL_LOG" 2>/dev/null; then
+GENERIC_PASS=0
+EXTERNAL_PASS=0
+grep -Eq "ARTI LINUX PASS|ARTI GPU ABI PASS" "$SERIAL_LOG" 2>/dev/null && GENERIC_PASS=1
+if [ -n "$DRIVER_KO" ] && grep -qF "$DRIVER_MARKER" "$SERIAL_LOG" 2>/dev/null; then
+    EXTERNAL_PASS=1
+fi
+if [ "$GENERIC_PASS" = "1" ] || [ "$EXTERNAL_PASS" = "1" ]; then
+    if { [ "$ARTI_DISPLAY" = "1" ] || [ "$ARTI_DISPLAY" = "true" ]; } && \
+       ! grep -q "simplefb registered" "$SERIAL_LOG" 2>/dev/null; then
         echo "=== SIMPLEFB TEST FAILED ==="
         echo "--- simplefb registration marker not found ---"
         exit 1
@@ -136,19 +177,20 @@ if grep -Eq "ARTI LINUX PASS|ARTI GPU ABI PASS" "$SERIAL_LOG" 2>/dev/null; then
         echo "=== GPU DRM TEST FAILED ==="
         echo "--- DRM takeover marker not found ---"
         exit 1
-    elif [ "$GPU_DRM_TEST" != "1" ] && \
-       grep -q "ARTI GPU ABI" "$SERIAL_LOG" 2>/dev/null && \
-       [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && \
+    elif [ "$GPU_DRM_TEST" != "1" ] && [ "$GPU_REFERENCE" = "1" ] && \
        ! grep -q "ARTI GPU PROBE PASS" "$SERIAL_LOG" 2>/dev/null; then
         echo "=== GPU PROBE TEST FAILED ==="
         echo "--- GPU probe marker not found ---"
         exit 1
-    elif [ "$GPU_DRM_TEST" != "1" ] && \
-       grep -q "ARTI GPU ABI" "$SERIAL_LOG" 2>/dev/null && \
-       [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && \
+    elif [ "$GPU_DRM_TEST" != "1" ] && [ "$GPU_REFERENCE" = "1" ] && \
        ! grep -q "ARTI GPU IRQ PASS" "$SERIAL_LOG" 2>/dev/null; then
         echo "=== GPU IRQ TEST FAILED ==="
         echo "--- GPU VSYNC IRQ marker not found ---"
+        exit 1
+    fi
+    if [ -n "$DRIVER_KO" ] && [ "$EXTERNAL_PASS" != "1" ]; then
+        echo "=== EXTERNAL DRIVER TEST FAILED ==="
+        echo "--- marker not found: $DRIVER_MARKER ---"
         exit 1
     fi
     echo ""

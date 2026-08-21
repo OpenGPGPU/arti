@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Minimal static init for ARTI Linux device test.
- * Mounts core filesystems, loads arti_rtl_test.ko, prints result,
+ * Mounts core filesystems, loads arti_rtl_test.ko and an optional external
+ * driver, prints result,
  * then powers off. The driver's probe prints ARTI LINUX PASS/FAIL
  * to the kernel console (ttyAMA0). */
 #include <sys/syscall.h>
@@ -57,18 +58,27 @@ int main(void) {
 
     putstr("ARTI Linux init: loading module...\r\n");
 
-    /* Load the RTL smoke-test module. */
-    int ret = load_module("/arti_rtl_test.ko", "", "arti_rtl_test");
-    if (ret < 0) {
-        putstr("ARTI LINUX INIT FAIL: cannot open .ko\r\n");
-    } else {
-        char buf[16];
-        putstr("ARTI Linux init: finit_module returned 0x");
-        putstr(u32hex((unsigned)ret, buf));
+    /* The smoke module is optional when an external driver is being tested. */
+    if (access("/arti_rtl_test.ko", F_OK) == 0) {
+        int ret = load_module("/arti_rtl_test.ko", "", "arti_rtl_test");
+        if (ret < 0) {
+            putstr("ARTI LINUX INIT FAIL: cannot load smoke .ko\r\n");
+        } else {
+            char buf[16];
+            putstr("ARTI Linux init: finit_module returned 0x");
+            putstr(u32hex((unsigned)ret, buf));
+        }
     }
 
-    /* Prefer the DRM handoff when its dependency modules are supplied. */
-    if (access("/drm.ko", F_OK) == 0) {
+    /* An externally supplied driver owns the device when present. Its ABI and
+     * compatible string are intentionally unknown to this generic harness. */
+    int external_driver = access("/arti_driver.ko", F_OK) == 0;
+    if (external_driver)
+        load_module("/arti_driver.ko", "", "arti_driver");
+
+    /* Reference GPU drivers are opt-in and are only used when no external
+     * driver was supplied. */
+    if (!external_driver && access("/drm.ko", F_OK) == 0) {
         load_module("/backlight.ko", "", "backlight");
         load_module("/drm.ko", "", "drm");
         load_module("/drm_kms_helper.ko", "", "drm_kms_helper");
@@ -76,7 +86,7 @@ int main(void) {
         load_module("/drm_shmem_helper.ko", "", "drm_shmem_helper");
         if (load_module("/arti_gpu_drm.ko", "", "arti_gpu_drm") == 0)
             putstr("ARTI Linux init: DRM driver loaded\r\n");
-    } else if (load_module("/arti_gpu_probe.ko", "", "arti_gpu_probe") == 0) {
+    } else if (!external_driver && load_module("/arti_gpu_probe.ko", "", "arti_gpu_probe") == 0) {
         putstr("ARTI Linux init: GPU probe loaded\r\n");
     }
 

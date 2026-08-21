@@ -10,7 +10,7 @@
 #   3. Linux kernel (AArch64, with virtio-net + modules + ext4)
 #   4. Busybox (static binary for initramfs)
 #   5. Debian 12 cloud rootfs (qcow2 + cloud-init)
-#   6. .ko driver modules (arti_rtl_test.ko + optional GPU probe)
+#   6. .ko driver modules (generic smoke test; optional reference GPU drivers)
 #   7. Embedded RTL model (simple_gpio compiled into QEMU)
 #
 # After this script completes, run:
@@ -62,6 +62,18 @@ QEMU_VERSION="${QEMU_VERSION:-11.1.0}"
 LINUX_VERSION="${LINUX_VERSION:-7.2}"
 ARTI_RTL_TOP="${ARTI_RTL_TOP:-simple_gpio}"
 ARTI_RTL_SOURCE="${ARTI_RTL_SOURCE:-$ARTI_DIR/examples/simple_gpio/simple_gpio.v}"
+ARTI_MMIO_BASE="${ARTI_MMIO_BASE:-0x0B000000}"
+ARTI_IRQ_BASE="${ARTI_IRQ_BASE:-180}"
+GPU_REFERENCE="${GPU_REFERENCE:-0}"
+DRIVER_KO="${DRIVER_KO:-}"
+if [ -z "${ARTI_DT_COMPAT:-}" ]; then
+    if [ "$GPU_REFERENCE" = "1" ]; then
+        ARTI_DT_COMPAT="arti,rtl-gpu;arti,rtl"
+    else
+        ARTI_DT_COMPAT="arti,rtl"
+    fi
+fi
+export ARTI_MMIO_BASE ARTI_DT_COMPAT ARTI_IRQ_BASE GPU_REFERENCE
 case "$ARTI_RTL_SOURCE" in
     /*) ;;
     *) ARTI_RTL_SOURCE="$ARTI_DIR/$ARTI_RTL_SOURCE" ;;
@@ -80,6 +92,11 @@ echo "  BUSYBOX_DIR   : $BUSYBOX_DIR"
 echo "  DEBIAN_QCOW2  : $DEBIAN_QCOW2"
 echo "  ARTI_RTL_TOP  : $ARTI_RTL_TOP"
 echo "  ARTI_RTL_SRC  : $ARTI_RTL_SOURCE"
+echo "  ARTI_MMIO_BASE: $ARTI_MMIO_BASE"
+echo "  ARTI_DT_COMPAT: $ARTI_DT_COMPAT"
+echo "  ARTI_IRQ_BASE : $ARTI_IRQ_BASE"
+echo "  GPU_REFERENCE : $GPU_REFERENCE"
+[ -z "$DRIVER_KO" ] || echo "  DRIVER_KO     : $DRIVER_KO"
 echo ""
 
 # Colors
@@ -263,6 +280,7 @@ patch_qemu_for_arti() {
 import pathlib
 import re
 import sys
+import os
 
 root = pathlib.Path(sys.argv[1])
 
@@ -331,16 +349,27 @@ def parse_dec_define(name, default=None):
         return default
     raise SystemExit(f"cannot find {name} in arti-rtl.c")
 
-base = 0x0b000000
+base = int(os.environ.get("ARTI_MMIO_BASE", "0x0B000000"), 0)
 mmio_size = parse_hex_define("ARTI_MMIO_SIZE", 0x1000)
 irq_count = parse_dec_define("ARTI_IRQ_COUNT", 0)
-irq_base = 180
+irq_base = int(os.environ.get("ARTI_IRQ_BASE", "180"), 0)
+
+compat_list = [item.strip() for item in
+               os.environ.get("ARTI_DT_COMPAT", "arti,rtl").split(";")
+               if item.strip()]
+if not compat_list:
+    raise SystemExit("ARTI_DT_COMPAT must contain at least one compatible string (use ';' between entries)")
 
 dt_reg_cells = f"2, 0x{base:x}, 2, 0x{mmio_size:x}"
 dt_reg_names = '"ctrl"'
-dt_compat_count = 1
-dt_compat_decls = 'char compatible0[] = "arti,rtl";'
-dt_compat_array = 'compatible0'
+dt_compat_count = len(compat_list)
+dt_compat_decls = " ".join(
+    f'char compatible{i}[] = "{value}";'
+    for i, value in enumerate(compat_list)
+)
+dt_compat_array = ", ".join(
+    f"compatible{i}" for i in range(dt_compat_count)
+)
 display_dt = ""
 fbnode_decl = ""
 
@@ -356,12 +385,6 @@ if has_display:
         f"2, 0x{fb_base:x}, 2, 0x{fb_size:x}"
     )
     dt_reg_names = '"ctrl\\0fb"'
-    dt_compat_count = 2
-    dt_compat_decls = (
-        'char compatible0[] = "arti,rtl-gpu"; '
-        'char compatible1[] = "arti,rtl";'
-    )
-    dt_compat_array = 'compatible0, compatible1'
     fbnode_decl = "\n    char *fbnode;\n    char *reserved;"
     display_dt = f"""
     qemu_fdt_setprop_cells(ms->fdt, node, "arti,boot-framebuffer",
@@ -676,7 +699,7 @@ rtl:
   clk_freq_mhz: 100
 bridge:
   protocol: auto
-  base_address: "0x0B00_0000"
+  base_address: "$ARTI_MMIO_BASE"
   data_width: 32
   mode: qemu-embedded
 advanced:
@@ -689,6 +712,9 @@ display:
   framebuffer_offset: ${ARTI_DISPLAY_FB_OFFSET:-0x100000}
   framebuffer_size: ${ARTI_DISPLAY_FB_SIZE:-0x800000}
 YAMLEOF
+
+CONFIG_STAMP="$GEN_DIR/generated/.config.stamp"
+CONFIG_SIGNATURE="$(python3 -c 'import hashlib, pathlib, sys; h = hashlib.sha256(); [h.update(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]; print(h.hexdigest())' "$GEN_DIR/config.yaml" "$ARTI_RTL_SOURCE")"
 
 EXPECT_DISPLAY=0
 if [ "${ARTI_DISPLAY:-0}" = "1" ] || [ "${ARTI_DISPLAY:-0}" = "true" ]; then
@@ -707,6 +733,7 @@ if [ -f "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" ] && \
    ! grep -q "QEMU_CLOCK_VIRTUAL" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    grep -q "arti_update_irqs" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    grep -q "V${ARTI_RTL_TOP}" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
+   [ -f "$CONFIG_STAMP" ] && [ "$(<"$CONFIG_STAMP")" = "$CONFIG_SIGNATURE" ] && \
    [ "$STUB_HAS_DISPLAY" = "$EXPECT_DISPLAY" ]; then
     info "Embedded model already generated"
 else
@@ -717,6 +744,7 @@ import sys; sys.path.insert(0, '$ARTI_DIR/src')
 from arti.cli import main
 main(['generate', '$GEN_DIR/config.yaml', '--output', '$GEN_DIR/generated'])
 " || fail "Failed to generate embedded model"
+    printf '%s\n' "$CONFIG_SIGNATURE" > "$CONFIG_STAMP"
 fi
 
 # Copy arti-rtl.c and arti_rtl_model.h into QEMU source tree
@@ -892,7 +920,7 @@ mount -t sysfs none /sys
 mount -t devtmpfs none /dev 2>/dev/null
 echo ""
 echo "=== ARTI Linux (Alpine busybox) ==="
-echo "RTL device at MMIO 0x0B000000"
+echo "RTL device at MMIO $ARTI_MMIO_BASE"
 echo "Commands: insmod, lsmod, rmmod, devmem, dmesg, cat"
 echo ""
 exec /bin/sh
@@ -927,14 +955,18 @@ else
 fi
 info "Debian rootfs: $DEBIAN_QCOW2 ($(du -sh "$DEBIAN_QCOW2" | cut -f1))"
 
-# Build cloud-init ISO
-if [ -f "$CLOUD_INIT_ISO" ] && [ -f "$SCRIPT_DIR/build_cloudinit.sh" ]; then
-    info "Cloud-init ISO already exists at $CLOUD_INIT_ISO"
-elif [ -f "$SCRIPT_DIR/build_cloudinit.sh" ]; then
-    info "Building cloud-init ISO..."
-    OUTPUT="$CLOUD_INIT_ISO" bash "$SCRIPT_DIR/build_cloudinit.sh" 2>&1 | tail -3
+# Cloud-init is built after the kernel modules below. A clean setup has no
+# arti_rtl_test.ko yet, so defer generation instead of failing here.
+if [ -f "$SCRIPT_DIR/build_cloudinit.sh" ] && [ -f "$SCRIPT_DIR/arti_rtl_test.ko" ]; then
+    if [ -f "$CLOUD_INIT_ISO" ]; then
+        info "Cloud-init ISO already exists at $CLOUD_INIT_ISO"
+    else
+        info "Building cloud-init ISO..."
+        GPU_REFERENCE="$GPU_REFERENCE" DRIVER_KO="$DRIVER_KO" OUTPUT="$CLOUD_INIT_ISO" \
+            bash "$SCRIPT_DIR/build_cloudinit.sh" 2>&1 | tail -3
+    fi
 else
-    warn "build_cloudinit.sh not found, skipping cloud-init ISO"
+    info "Deferring cloud-init ISO until driver modules are built"
 fi
 
 # ---------------------------------------------------------------------------
@@ -942,27 +974,34 @@ fi
 # ---------------------------------------------------------------------------
 step "Step 6/7: Building driver modules (.ko)"
 
-info "Building arti_rtl_test.ko and arti_gpu_probe.ko..."
+if [ "$GPU_REFERENCE" = "1" ]; then
+    info "Building generic smoke test and reference GPU modules..."
+else
+    info "Building generic smoke-test module..."
+fi
 grep -q "^obj-m" "$SCRIPT_DIR/Makefile" 2>/dev/null || \
-    printf 'obj-m += arti_rtl_test.o\nobj-m += arti_gpu_probe.o\nobj-m += arti_gpu_drm.o\n' > "$SCRIPT_DIR/Makefile"
-make -C "$LINUX_BUILD" M="$SCRIPT_DIR" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
+    printf 'obj-m += arti_rtl_test.o\n' > "$SCRIPT_DIR/Makefile"
+GPU_REFERENCE="$GPU_REFERENCE" make -C "$LINUX_BUILD" M="$SCRIPT_DIR" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
+    EXTRA_CFLAGS="-DARTI_BASE=$ARTI_MMIO_BASE" \
     HOSTCFLAGS="$LINUX_HOST_CFLAGS" modules 2>&1 | tail -5
 [ -f "$SCRIPT_DIR/arti_rtl_test.ko" ] || fail "Driver module build failed"
 info "Driver: $SCRIPT_DIR/arti_rtl_test.ko ($(du -sh "$SCRIPT_DIR/arti_rtl_test.ko" | cut -f1))"
-if [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ]; then
+if [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ]; then
     info "GPU probe: $SCRIPT_DIR/arti_gpu_probe.ko ($(du -sh "$SCRIPT_DIR/arti_gpu_probe.ko" | cut -f1))"
 fi
-if [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ]; then
+if [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ]; then
     info "GPU DRM: $SCRIPT_DIR/arti_gpu_drm.ko ($(du -sh "$SCRIPT_DIR/arti_gpu_drm.ko" | cut -f1))"
 fi
 
 if [ -f "$SCRIPT_DIR/build_cloudinit.sh" ]; then
     if [ ! -f "$CLOUD_INIT_ISO" ] || \
        [ "$SCRIPT_DIR/arti_rtl_test.ko" -nt "$CLOUD_INIT_ISO" ] || \
-       { [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && [ "$SCRIPT_DIR/arti_gpu_probe.ko" -nt "$CLOUD_INIT_ISO" ]; } || \
-       { [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ] && [ "$SCRIPT_DIR/arti_gpu_drm.ko" -nt "$CLOUD_INIT_ISO" ]; }; then
+       [ "$GPU_REFERENCE" = "1" ] || [ -n "$DRIVER_KO" ] || \
+       { [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && [ "$SCRIPT_DIR/arti_gpu_probe.ko" -nt "$CLOUD_INIT_ISO" ]; } || \
+       { [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ] && [ "$SCRIPT_DIR/arti_gpu_drm.ko" -nt "$CLOUD_INIT_ISO" ]; }; then
         info "Updating cloud-init ISO with driver modules..."
-        OUTPUT="$CLOUD_INIT_ISO" bash "$SCRIPT_DIR/build_cloudinit.sh" 2>&1 | tail -3
+        GPU_REFERENCE="$GPU_REFERENCE" DRIVER_KO="$DRIVER_KO" OUTPUT="$CLOUD_INIT_ISO" \
+            bash "$SCRIPT_DIR/build_cloudinit.sh" 2>&1 | tail -3
     fi
 fi
 
@@ -980,10 +1019,10 @@ echo "  Initramfs  : $ALPINE_CPIO"
 echo "  Debian disk: $DEBIAN_QCOW2"
 echo "  Cloud-init : $CLOUD_INIT_ISO"
 echo "  Driver .ko : $SCRIPT_DIR/arti_rtl_test.ko"
-if [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ]; then
+if [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ]; then
     echo "  GPU .ko    : $SCRIPT_DIR/arti_gpu_probe.ko"
 fi
-if [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ]; then
+if [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ]; then
     echo "  DRM .ko    : $SCRIPT_DIR/arti_gpu_drm.ko"
 fi
 echo ""

@@ -7,7 +7,9 @@
 
 #include "arti_gpu_abi.h"
 
+#ifndef ARTI_BASE
 #define ARTI_BASE 0x0b000000ULL
+#endif
 #define ARTI_SIZE 0x1000
 #define ARTI_TEST_VALUE 0x123456a5U
 

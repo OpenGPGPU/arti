@@ -20,6 +20,8 @@ QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
 KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
 DISK="${DISK:-/tmp/arti-dev.qcow2}"
 CIDATA="${CIDATA:-/tmp/cloud-init.iso}"
+GPU_REFERENCE="${GPU_REFERENCE:-0}"
+DRIVER_KO="${DRIVER_KO:-}"
 SSH_PORT="${SSH_PORT:-}"
 
 find_free_port() {
@@ -46,10 +48,13 @@ fi
 # Auto-build cloud-init ISO if missing or stale relative to driver modules.
 if [ ! -f "$CIDATA" ] || \
    { [ -f "$SCRIPT_DIR/arti_rtl_test.ko" ] && [ "$SCRIPT_DIR/arti_rtl_test.ko" -nt "$CIDATA" ]; } || \
-   { [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && [ "$SCRIPT_DIR/arti_gpu_probe.ko" -nt "$CIDATA" ]; } || \
-   { [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ] && [ "$SCRIPT_DIR/arti_gpu_drm.ko" -nt "$CIDATA" ]; }; then
+   [ "$GPU_REFERENCE" = "1" ] || [ -n "$DRIVER_KO" ] || \
+   { [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && [ "$SCRIPT_DIR/arti_gpu_probe.ko" -nt "$CIDATA" ]; } || \
+   { [ "$GPU_REFERENCE" = "1" ] && [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ] && [ "$SCRIPT_DIR/arti_gpu_drm.ko" -nt "$CIDATA" ]; } || \
+   { [ -n "$DRIVER_KO" ] && [ -f "$DRIVER_KO" ] && [ "$DRIVER_KO" -nt "$CIDATA" ]; }; then
     echo "  cloud-init ISO missing or stale, building..."
-    bash "$SCRIPT_DIR/build_cloudinit.sh" || { echo "FAIL: cannot build cloud-init ISO"; exit 1; }
+    GPU_REFERENCE="$GPU_REFERENCE" DRIVER_KO="$DRIVER_KO" \
+        bash "$SCRIPT_DIR/build_cloudinit.sh" || { echo "FAIL: cannot build cloud-init ISO"; exit 1; }
 fi
 [ -f "$CIDATA" ] || { echo "FAIL: cloud-init not found at $CIDATA"; exit 1; }
 
@@ -64,7 +69,7 @@ DISPLAY_ARGS=(-display "$QEMU_DISPLAY")
 echo "=== ARTI Debian Dev Environment ==="
 echo "  Disk    : $DISK (persistent)"
 echo "  Kernel  : $KERNEL"
-echo "  Device  : MMIO 0x0B000000 (embedded Verilated model)"
+echo "  Device  : embedded Verilated model"
 echo "  Display : $QEMU_DISPLAY"
 echo "  Login   : root (password: arti)"
 echo "  Network : user-mode (SLIRP) - apt/DNS via 10.0.2.2"

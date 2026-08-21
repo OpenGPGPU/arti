@@ -19,6 +19,7 @@ TOP="${TOP:-simple_gpio}"
 QEMU_SRC="${QEMU_SRC:-$(cd "$ARTI_DIR/../qemu" && pwd)}"
 QEMU_BUILD="${QEMU_BUILD:-/tmp/qemu-arti-build}"
 OUTPUT="${OUTPUT:-/tmp/arti-embedded-gen}"
+ARTI_MMIO_BASE="${ARTI_MMIO_BASE:-0x0B000000}"
 
 # Resolve RTL to absolute path (relative paths are resolved from ARTI_DIR)
 if [[ "$RTL_INPUT" = /* ]]; then
@@ -48,7 +49,7 @@ rtl:
 
 bridge:
   protocol: auto
-  base_address: "0x0B00_0000"
+  base_address: "$ARTI_MMIO_BASE"
   data_width: 32
   mode: qemu-embedded
 

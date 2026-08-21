@@ -137,16 +137,19 @@ After installation on macOS the command is named `aarch64-unknown-linux-gnu-gcc`
 toolchain and `bee-headers` (which provide the `elf.h` / `byteswap.h` / `endian.h`
 headers needed for host-side Linux kernel builds).
 
-### Linux simplefb boot display for future GPU RTL
+### Generic Linux integration and optional simplefb display
 
-After adding a `display` section to the config, the generated `arti-rtl.c` includes
-`GraphicHwOps` and exposes a guest-writable framebuffer. The display device is at
-`0x0B000000`, the framebuffer defaults to `0x0B100000`, and the format is 32bpp
-`a8r8g8b8`. ARTI automatically adds two nodes to the virt device tree:
+ARTI provides the QEMU SysBus device, MMIO/IRQ wiring, and optional device-tree nodes.
+It does not contain a vendor GPU ABI or a production Linux GPU driver. Any matching
+Linux driver can be supplied separately and bound through the generated DT node.
 
-- `/arti-rtl@b000000`: the real RTL device node. With display enabled it is compatible
-  with `arti,rtl-gpu` and `arti,rtl`, exposes `ctrl` and `fb` resources, and is the node
-  a future Linux GPU driver should bind to.
+When `display` is enabled, the generated `arti-rtl.c` includes `GraphicHwOps` and
+exposes a guest-writable framebuffer. The MMIO base defaults to `0x0B000000`, the
+framebuffer defaults to `0x0B100000`, and the format is 32bpp `a8r8g8b8`. ARTI adds:
+
+- `/arti-rtl@b000000`: the RTL device node. Its `compatible` list, MMIO base, IRQ base,
+  and resources are generated from the integration settings; an external Linux driver
+  should bind to the compatible string it owns.
 - `/framebuffer@b100000`: a `simple-framebuffer` node for Linux early console
   output. Its `display` phandle points back to `/arti-rtl@b000000`, so the later GPU
   driver has a standard handoff path from simplefb to the real display controller.
@@ -166,7 +169,7 @@ display:
   framebuffer_size: 0x800000
 ```
 
-The intended reset-time ABI for GPU RTL is:
+The reference GPU example uses this reset-time ABI:
 
 - MMIO control base: `0x0B000000`
 - Default framebuffer base: `0x0B100000`
@@ -175,13 +178,13 @@ The intended reset-time ABI for GPU RTL is:
   `examples/linux_arti_driver/arti_gpu_abi.h`: framebuffer base, width, height, stride,
   format, enable, IRQ status, and IRQ mask.
 
-After Linux loads the real GPU driver, that driver should bind to `arti,rtl-gpu`, program
-the display controller registers, and take over the framebuffer from simplefb. If the RTL
-exports interrupt output ports, ARTI wires them to GIC SPI lines starting at 180 and emits
-matching `interrupts` cells in the device tree; this gives future VSYNC IRQ support a DT
-path without changing the boot-display flow.
+For a real GPU, put the ABI and driver outside ARTI. If the RTL exports interrupt output
+ports, ARTI wires them to GIC SPI lines starting at 180 and emits matching `interrupts`
+cells in the device tree. A matching external driver can then program the controller and
+take over the framebuffer from simplefb.
 
-For early bring-up, `examples/linux_arti_driver/arti_gpu_probe.c` builds into
+The repository GPU modules are reference-only and opt-in. For early bring-up,
+`examples/linux_arti_driver/arti_gpu_probe.c` builds into
 `arti_gpu_probe.ko`. It is a minimal platform driver, not a full DRM driver: it binds to
 `arti,rtl-gpu`, maps the `ctrl` and `fb` resources, logs the boot mode, and can optionally
 write a framebuffer color pattern with `fill_pattern=1`.
@@ -192,8 +195,8 @@ acquires the framebuffer aperture from `simplefb`, programs the scanout ABI, and
 DRM shmem framebuffer updates into the RTL framebuffer. Its module dependencies are
 `backlight.ko`, `drm.ko`, `drm_kms_helper.ko`, `drm_client_lib.ko`, and
 `drm_shmem_helper.ko`; the
-initramfs test harness automatically selects this driver when those dependency modules
-are present, otherwise it uses the lightweight probe.
+the initramfs harness uses this driver only when the DRM reference test is explicitly
+requested; otherwise the lightweight probe is used.
 
 This path intentionally does not provide UEFI/EDK2 graphics. The UEFI menu remains black
 unless a GOP driver is added to firmware or the device is wrapped as firmware-supported
@@ -216,14 +219,35 @@ vvp /tmp/arti_gpu_tb.vvp
 
 The `test` and `interactive` modes of `run.sh` always run with `-display none` and exit
 after the test or shell session, so `ARTI_DISPLAY` alone does not open a graphics window.
-The automated Linux test also loads `arti_gpu_probe.ko` when it is present and verifies
-that the `ctrl` and `fb` resources bind successfully after `simplefb` registers.
+The default Linux test only loads `arti_rtl_test.ko`. Enable the reference modules
+explicitly with `GPU_REFERENCE=1`; this also defaults the DT compatible list to
+`arti,rtl-gpu;arti,rtl`.
 
 To exercise the DRM takeover path in the same initramfs test, use:
 
 ```bash
-GPU_DRM_TEST=1 ./examples/linux_arti_driver/run_linux_test.sh
+GPU_REFERENCE=1 ARTI_DISPLAY=1 GPU_DRM_TEST=1 \
+  ./examples/linux_arti_driver/run_linux_test.sh
 ```
+
+For an arbitrary external GPU RTL and matching driver, provide the module and a marker
+printed by that driver. The generic harness does not inspect or call into the driver's
+ABI:
+
+```bash
+ARTI_MMIO_BASE=0x0C000000 \
+ARTI_DT_COMPAT='vendor,my-gpu;arti,rtl' \
+DRIVER_KO=/path/to/vendor_gpu.ko \
+DRIVER_MARKER='VENDOR GPU PASS' \
+SKIP_GENERIC_TEST=1 \
+  ./examples/linux_arti_driver/run_linux_test.sh
+```
+
+`ARTI_DT_COMPAT` uses semicolons between entries so the comma in a normal
+`vendor,device` compatible string is preserved. `ARTI_MMIO_BASE` and `ARTI_IRQ_BASE`
+control the generated QEMU mapping and device tree. The same `DRIVER_KO` and
+`GPU_REFERENCE=1` options are supported by `build_cloudinit.sh`/`run_debian.sh`; the
+external module is installed as `/root/arti_driver.ko` for manual `insmod`.
 To see the framebuffer, boot the Debian environment and set a QEMU UI backend:
 
 ```bash
@@ -491,11 +515,15 @@ make -C /tmp/arti-linux-build \
 Confirm the `.ko` files are generated and that vermagic matches the kernel:
 
 ```bash
-ls -lh examples/linux_arti_driver/arti_rtl_test.ko \
-       examples/linux_arti_driver/arti_gpu_probe.ko
+ls -lh examples/linux_arti_driver/arti_rtl_test.ko
 strings examples/linux_arti_driver/arti_rtl_test.ko | grep vermagic
 # Should output: vermagic=7.2.0-rc6-... SMP preempt aarch64
 # matching the contents of kernel.release
+
+# Optional repository reference GPU modules
+GPU_REFERENCE=1 make -C /tmp/arti-linux-build \
+    M=$(pwd)/examples/linux_arti_driver ARCH=arm64 \
+    CROSS_COMPILE=aarch64-linux-gnu- modules
 ```
 
 #### 5.4 Run the end-to-end test in one click
@@ -577,8 +605,9 @@ Network configuration is applied automatically via cloud-init: on first boot an
 every subsequent boot, so no DHCP is needed.
 
 The cloud-init ISO is generated automatically by `build_cloudinit.sh` (on first boot
-`run_debian.sh` detects it and builds it automatically); it embeds `arti_rtl_test.ko`,
-`arti_gpu_probe.ko` when present, and the network service configuration.
+`run_debian.sh` detects it and builds it automatically). By default it embeds only
+`arti_rtl_test.ko`; reference modules are embedded only with `GPU_REFERENCE=1`, and an
+external module can be embedded with `DRIVER_KO=/path/to/driver.ko`.
 
 With display enabled, you can smoke-test the future GPU handoff node from Debian:
 
