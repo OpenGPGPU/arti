@@ -73,6 +73,11 @@ static int arti_gpu_read_boot_mode(struct platform_device *pdev,
     if (!gpu->format)
         gpu->format = "unknown";
 
+    if (!gpu->width || !gpu->height ||
+        (u64)gpu->stride < (u64)gpu->width * 4u ||
+        strcmp(gpu->format, "a8r8g8b8"))
+        return -EINVAL;
+
     return 0;
 }
 
@@ -164,6 +169,9 @@ static int arti_gpu_probe(struct platform_device *pdev)
 
     gpu->fb_phys = fb->start;
     gpu->fb_size = resource_size(fb);
+    if ((u64)gpu->stride * gpu->height > gpu->fb_size)
+        return dev_err_probe(&pdev->dev, -EINVAL,
+                             "framebuffer resource is too small\n");
     /*
      * The boot simplefb driver may still own this memory resource. Map it
      * without requesting the resource; the full DRM driver will explicitly
@@ -175,9 +183,12 @@ static int arti_gpu_probe(struct platform_device *pdev)
 
     id = ioread32(gpu->ctrl + ARTI_GPU_REG_ID);
     version = ioread32(gpu->ctrl + ARTI_GPU_REG_VERSION);
-    if (id == ARTI_GPU_ID)
-        dev_info(&pdev->dev, "ARTI GPU ABI: ID=0x%08x VERSION=0x%08x\n",
-                 id, version);
+    if (id != ARTI_GPU_ID || version != ARTI_GPU_VERSION_1)
+        return dev_err_probe(&pdev->dev, -ENODEV,
+                             "unsupported GPU ABI id=0x%08x version=0x%08x\n",
+                             id, version);
+    dev_info(&pdev->dev, "ARTI GPU ABI: ID=0x%08x VERSION=0x%08x\n",
+             id, version);
 
     platform_set_drvdata(pdev, gpu);
 

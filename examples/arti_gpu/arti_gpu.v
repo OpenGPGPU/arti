@@ -46,13 +46,18 @@ module arti_gpu #(
     reg [31:0] irq_status;
     reg [31:0] irq_mask;
     reg [31:0] vsync_counter;
+    reg        aw_pending;
+    reg        w_pending;
     reg        write_pending;
     reg        read_pending;
     reg [31:0] read_data;
-    reg [AW-1:0] write_addr;
+    reg [AW-1:0] aw_addr_reg;
+    reg [DW-1:0] w_data_reg;
+    reg [DW/8-1:0] w_strb_reg;
 
-    assign s_axi_awready = !write_pending;
-    assign s_axi_wready  = !write_pending;
+    // AXI-Lite permits AW and W to arrive independently.
+    assign s_axi_awready = !aw_pending && !write_pending;
+    assign s_axi_wready  = !w_pending && !write_pending;
     assign s_axi_bresp   = 2'b00;
     assign s_axi_bvalid  = write_pending;
     assign s_axi_arready = !read_pending;
@@ -86,9 +91,13 @@ module arti_gpu #(
             irq_status   <= 32'd0;
             irq_mask     <= 32'd0;
             vsync_counter <= 32'd0;
+            aw_pending   <= 1'b0;
+            w_pending    <= 1'b0;
             write_pending <= 1'b0;
             read_pending  <= 1'b0;
-            write_addr    <= {AW{1'b0}};
+            aw_addr_reg   <= {AW{1'b0}};
+            w_data_reg    <= {DW{1'b0}};
+            w_strb_reg    <= {(DW/8){1'b0}};
             read_data     <= 32'd0;
         end else begin
             // A deterministic synthetic VSYNC source keeps the ABI testable
@@ -100,23 +109,36 @@ module arti_gpu #(
                 vsync_counter <= vsync_counter + 1'b1;
             end
 
-            if (!write_pending && s_axi_awvalid && s_axi_wvalid) begin
-                write_addr <= s_axi_awaddr;
-                case (s_axi_awaddr[7:2])
-                    6'h04: fb_base_lo <= merge_strobe(fb_base_lo, s_axi_wdata, s_axi_wstrb);
-                    6'h05: fb_base_hi <= merge_strobe(fb_base_hi, s_axi_wdata, s_axi_wstrb);
-                    6'h06: width      <= merge_strobe(width, s_axi_wdata, s_axi_wstrb);
-                    6'h07: height     <= merge_strobe(height, s_axi_wdata, s_axi_wstrb);
-                    6'h08: stride     <= merge_strobe(stride, s_axi_wdata, s_axi_wstrb);
-                    6'h09: format     <= merge_strobe(format, s_axi_wdata, s_axi_wstrb);
-                    6'h0a: control    <= merge_strobe(control, s_axi_wdata, s_axi_wstrb);
-                    6'h0c: irq_status <= irq_status & ~s_axi_wdata;
-                    6'h0d: irq_mask   <= merge_strobe(irq_mask, s_axi_wdata, s_axi_wstrb);
-                    default: ;
-                endcase
-                write_pending <= 1'b1;
-            end else if (write_pending && s_axi_bready) begin
-                write_pending <= 1'b0;
+            if (write_pending) begin
+                if (s_axi_bready)
+                    write_pending <= 1'b0;
+            end else begin
+                if (s_axi_awvalid && s_axi_awready) begin
+                    aw_addr_reg <= s_axi_awaddr;
+                    aw_pending <= 1'b1;
+                end
+                if (s_axi_wvalid && s_axi_wready) begin
+                    w_data_reg <= s_axi_wdata;
+                    w_strb_reg <= s_axi_wstrb;
+                    w_pending <= 1'b1;
+                end
+                if (aw_pending && w_pending) begin
+                    case (aw_addr_reg[7:2])
+                        6'h04: fb_base_lo <= merge_strobe(fb_base_lo, w_data_reg, w_strb_reg);
+                        6'h05: fb_base_hi <= merge_strobe(fb_base_hi, w_data_reg, w_strb_reg);
+                        6'h06: width      <= merge_strobe(width, w_data_reg, w_strb_reg);
+                        6'h07: height     <= merge_strobe(height, w_data_reg, w_strb_reg);
+                        6'h08: stride     <= merge_strobe(stride, w_data_reg, w_strb_reg);
+                        6'h09: format     <= merge_strobe(format, w_data_reg, w_strb_reg);
+                        6'h0a: control    <= merge_strobe(control, w_data_reg, w_strb_reg);
+                        6'h0c: irq_status <= irq_status & ~w_data_reg;
+                        6'h0d: irq_mask   <= merge_strobe(irq_mask, w_data_reg, w_strb_reg);
+                        default: ;
+                    endcase
+                    aw_pending <= 1'b0;
+                    w_pending <= 1'b0;
+                    write_pending <= 1'b1;
+                end
             end
 
             if (!read_pending && s_axi_arvalid) begin

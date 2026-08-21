@@ -362,7 +362,7 @@ if has_display:
         'char compatible1[] = "arti,rtl";'
     )
     dt_compat_array = 'compatible0, compatible1'
-    fbnode_decl = "\n    char *fbnode;"
+    fbnode_decl = "\n    char *fbnode;\n    char *reserved;"
     display_dt = f"""
     qemu_fdt_setprop_cells(ms->fdt, node, "arti,boot-framebuffer",
                            0x0, 0x{fb_base:x}, 0x0, 0x{fb_size:x});
@@ -372,6 +372,16 @@ if has_display:
     qemu_fdt_setprop_string(ms->fdt, node, "arti,boot-format", "a8r8g8b8");
 
     {fb_marker}
+    qemu_fdt_add_subnode(ms->fdt, "/reserved-memory");
+    qemu_fdt_setprop_cells(ms->fdt, "/reserved-memory", "#address-cells", 0x2);
+    qemu_fdt_setprop_cells(ms->fdt, "/reserved-memory", "#size-cells", 0x2);
+    qemu_fdt_setprop(ms->fdt, "/reserved-memory", "ranges", NULL, 0);
+    reserved = g_strdup_printf("/reserved-memory/framebuffer@%x", 0x{fb_base:x});
+    qemu_fdt_add_subnode(ms->fdt, reserved);
+    qemu_fdt_setprop_cells(ms->fdt, reserved, "reg",
+                           0x0, 0x{fb_base:x}, 0x0, 0x{fb_size:x});
+    qemu_fdt_setprop(ms->fdt, reserved, "no-map", NULL, 0);
+    g_free(reserved);
     fbnode = g_strdup_printf("/framebuffer@%x", 0x{fb_base:x});
     qemu_fdt_add_subnode(ms->fdt, fbnode);
     qemu_fdt_setprop_string(ms->fdt, fbnode,
@@ -692,7 +702,7 @@ fi
 if [ -f "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" ] && \
    grep -q "SKIP_QEMU_REBUILD" "$GEN_DIR/generated/embedded/build_embedded.sh" && \
    grep -q "sc_time_stamp" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
-   grep -q "arti-qemu-stub-v3" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
+   grep -q "arti-qemu-stub-v4" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    ! grep -q '"hw/irq.h"' "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    ! grep -q "QEMU_CLOCK_VIRTUAL" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    grep -q "arti_update_irqs" "$GEN_DIR/generated/qemu/arti-rtl.c" && \

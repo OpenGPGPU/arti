@@ -144,9 +144,11 @@ def render_axi_lite_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("{")
     lines.append("    if (!g_rtl || size == 0 || size > {})".format(max_bytes))
     lines.append("        return -1;")
-    lines.append("    {} word = ({})data;".format(data_type, data_type))
     lines.append("    uint8_t addr_val = (uint8_t)(addr & {:#04x});".format(addr_mask))
-    lines.append("    uint8_t wstrb = (uint8_t)((1u << size) - 1u) << (addr_val & ({}));".format(max_bytes_m1))
+    lines.append("    unsigned lane_shift = addr_val & ({});".format(max_bytes_m1))
+    lines.append("    {} word = ({})(({})data << (lane_shift * 8));".format(
+        data_type, data_type, data_type))
+    lines.append("    uint8_t wstrb = (uint8_t)((1u << size) - 1u) << lane_shift;")
     lines.append("    idle();")
     lines.append("    g_rtl->{} = addr_val;".format(awaddr))
     lines.append("    g_rtl->{} = word;".format(wdata))
@@ -611,7 +613,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     has_display = bool(config and config.display_enabled)
 
     lines = []
-    lines.append("/* arti-qemu-stub-v3 */")
+    lines.append("/* arti-qemu-stub-v4 */")
     lines.append('#include "qemu/osdep.h"')
     lines.append('#include "hw/core/sysbus.h"')
     lines.append('#include "qapi/error.h"')
@@ -727,14 +729,16 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("}")
     lines.append("static void arti_write(void *opaque, hwaddr offset, uint64_t value, unsigned size)")
     lines.append("{")
-    if has_display or has_irq:
+    if has_display:
         lines.append("    ArtiRtlState *s = opaque;")
         lines.append("    if (offset >= ARTI_FB_OFFSET &&")
         lines.append("        offset + size <= ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
         lines.append("        memcpy(s->vram + (offset - ARTI_FB_OFFSET), &value, size);")
         lines.append("        s->invalidate = true;")
         lines.append("        return;")
-    lines.append("    }")
+        lines.append("    }")
+    elif has_irq:
+        lines.append("    ArtiRtlState *s = opaque;")
     lines.append("    arti_rtl_model_write(offset, value, size);")
     if has_irq:
         lines.append("    arti_update_irqs(s);")

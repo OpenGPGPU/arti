@@ -215,7 +215,8 @@ static int arti_gpu_drm_probe(struct platform_device *pdev)
         return dev_err_probe(&pdev->dev, -EINVAL,
                              "unsupported framebuffer format %s\n", format);
 
-    if (!gpu->width || !gpu->height || gpu->stride < gpu->width * 4u)
+    if (!gpu->width || !gpu->height ||
+        (u64)gpu->stride < (u64)gpu->width * 4u)
         return dev_err_probe(&pdev->dev, -EINVAL, "invalid boot mode\n");
 
     ctrl = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ctrl");

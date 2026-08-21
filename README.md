@@ -150,6 +150,8 @@ After adding a `display` section to the config, the generated `arti-rtl.c` inclu
 - `/framebuffer@b100000`: a `simple-framebuffer` node for Linux early console
   output. Its `display` phandle points back to `/arti-rtl@b000000`, so the later GPU
   driver has a standard handoff path from simplefb to the real display controller.
+- `/reserved-memory/framebuffer@b100000`: reserves the framebuffer aperture so a real
+  Linux memory allocator cannot reuse it before the GPU driver takes over.
 
 With `CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` enabled, Linux can use this as the
 boot display before the real GPU driver is loaded.
@@ -202,6 +204,15 @@ graphics hardware. For ARTI GPU RTL bring-up, boot Linux directly with `-kernel`
 while the model is generated (during `setup_env.sh` or `build_embedded_qemu.sh`), not at
 runtime. If you have already built the model without display support, rerun the setup with
 `ARTI_DISPLAY=1` to regenerate it.
+
+The standalone RTL smoke test covers independent AXI-Lite AW/W arrival, register reads,
+VSYNC IRQ assertion, and W1C clearing:
+
+```bash
+iverilog -g2012 -s arti_gpu_tb -o /tmp/arti_gpu_tb.vvp \
+  examples/arti_gpu/arti_gpu.v examples/arti_gpu/arti_gpu_tb.v
+vvp /tmp/arti_gpu_tb.vvp
+```
 
 The `test` and `interactive` modes of `run.sh` always run with `-display none` and exit
 after the test or shell session, so `ARTI_DISPLAY` alone does not open a graphics window.

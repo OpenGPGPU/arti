@@ -214,6 +214,20 @@ class MultiProtocolTest(unittest.TestCase):
             self.assertIn("GraphicHwOps", stub)
             self.assertIn("ARTI_MMIO_EXTENT", stub)
 
+    @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
+                         "Icarus Verilog is unavailable")
+    def test_arti_gpu_rtl_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "arti_gpu_tb.vvp"
+            subprocess.run([
+                "iverilog", "-g2012", "-s", "arti_gpu_tb", "-o", str(output),
+                str(ROOT / "examples/arti_gpu/arti_gpu.v"),
+                str(ROOT / "examples/arti_gpu/arti_gpu_tb.v"),
+            ], check=True, capture_output=True, text=True)
+            result = subprocess.run(["vvp", str(output)], check=True,
+                                    capture_output=True, text=True)
+            self.assertIn("ARTI GPU RTL TEST PASS", result.stdout)
+
     def test_generate_apb_embedded(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "config.yaml"
@@ -253,6 +267,8 @@ class MultiProtocolTest(unittest.TestCase):
             stub = (output / "qemu/arti-rtl.c").read_text()
             self.assertIn("sysbus_init_irq", stub)
             self.assertIn("arti_irq_timer", stub)
+            self.assertNotIn("ARTI_FB_OFFSET", stub)
+            self.assertNotIn("s->vram", stub)
 
     def test_generate_axi4_embedded(self):
         with tempfile.TemporaryDirectory() as tmp:
