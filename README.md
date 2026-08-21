@@ -64,12 +64,16 @@ metadata:
 Use the reference profile without setting separate GPU variables:
 
 ```bash
-INTEGRATION_CONFIG=examples/linux_arti_driver/integration_gpu_reference.yaml \
+INTEGRATION_CONFIG=examples/arti_gpu/linux_integration.yaml \
   ./examples/linux_arti_driver/setup_env.sh
 
-INTEGRATION_CONFIG=examples/linux_arti_driver/integration_gpu_reference.yaml \
+INTEGRATION_CONFIG=examples/arti_gpu/linux_integration.yaml \
   ./examples/linux_arti_driver/run_linux_test.sh
 ```
+
+The same example profile is available beside the RTL at
+`examples/arti_gpu/linux_integration.yaml`. Its `source_files` path is relative to that
+file, so it can be copied with `arti_gpu.v` into another GPU project and adapted there.
 
 For a real GPU project, copy the generic profile and change `rtl`, `bridge`, and the
 `integration` fields to match the external RTL and driver. Paths in an integration
@@ -278,8 +282,16 @@ driver because it writes to the control aperture.
 To exercise the DRM takeover path in the same initramfs test, use:
 
 ```bash
-GPU_REFERENCE=1 ARTI_DISPLAY=1 GPU_DRM_TEST=1 \
+INTEGRATION_CONFIG=examples/arti_gpu/linux_integration.yaml \
+GPU_DRM_TEST=1 \
   ./examples/linux_arti_driver/run_linux_test.sh
+```
+
+Before either boot test, validate the profile and artifacts without starting QEMU:
+
+```bash
+INTEGRATION_CONFIG=examples/arti_gpu/linux_integration.yaml \
+  ./examples/linux_arti_driver/check_integration.sh
 ```
 
 For an arbitrary external GPU RTL and matching driver, provide the module and a marker

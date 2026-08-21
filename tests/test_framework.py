@@ -233,6 +233,17 @@ class MultiProtocolTest(unittest.TestCase):
         self.assertEqual(integration.dt_compat, ("arti,rtl-gpu", "arti,rtl"))
         self.assertTrue(integration.gpu_reference)
 
+    def test_load_gpu_project_integration_profile(self):
+        integration = load_integration(ROOT / "examples/arti_gpu/linux_integration.yaml")
+        self.assertEqual(integration.config.top_module, "arti_gpu")
+        self.assertEqual(
+            integration.config.source_files,
+            ["arti_gpu.v"],
+        )
+        self.assertEqual(integration.dt_compat, ("arti,rtl-gpu", "arti,rtl"))
+        self.assertTrue(integration.config.display_enabled)
+        self.assertTrue(integration.gpu_reference)
+
     def test_load_integration_profile_resolves_driver_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

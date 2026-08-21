@@ -1,0 +1,37 @@
+# Linux/QEMU integration profile for the repository's reference GPU RTL.
+# This profile is an example of how a GPU project can keep its RTL and
+# integration metadata together. The driver here remains reference-only.
+project:
+  name: arti_gpu_linux_reference
+
+rtl:
+  top_module: arti_gpu
+  source_files: [arti_gpu.v]
+  clk_freq_mhz: 100
+
+bridge:
+  protocol: auto
+  base_address: "0x0B00_0000"
+  data_width: 32
+  mode: qemu-embedded
+
+display:
+  enabled: true
+  width: 1024
+  height: 768
+  format: a8r8g8b8
+  framebuffer_offset: 0x100000
+  framebuffer_size: 0x800000
+
+integration:
+  irq_base: 180
+  dt_compat: ["arti,rtl-gpu", "arti,rtl"]
+  driver_ko: ""
+  driver_deps: ""
+  driver_manifest: ""
+  driver_marker: "ARTI EXTERNAL DRIVER PASS"
+  skip_generic_test: true
+  gpu_reference: true
+
+advanced:
+  timeout_cycles: 1000
