@@ -137,14 +137,22 @@ After installation on macOS the command is named `aarch64-unknown-linux-gnu-gcc`
 toolchain and `bee-headers` (which provide the `elf.h` / `byteswap.h` / `endian.h`
 headers needed for host-side Linux kernel builds).
 
-### Generic framebuffer display extension
+### Linux simplefb boot display for future GPU RTL
 
 After adding a `display` section to the config, the generated `arti-rtl.c` includes
 `GraphicHwOps` and exposes a guest-writable framebuffer. The display device is at
 `0x0B000000`, the framebuffer defaults to `0x0B100000`, and the format is 32bpp
-`a8r8g8b8`. ARTI also automatically adds a `/framebuffer` node (`simple-framebuffer`) to
-the virt device tree, so with `CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` enabled,
-Linux can use it as the boot display.
+`a8r8g8b8`. ARTI automatically adds two nodes to the virt device tree:
+
+- `/arti-rtl@b000000`: the real RTL device node. With display enabled it is compatible
+  with `arti,rtl-gpu` and `arti,rtl`, exposes `ctrl` and `fb` resources, and is the node
+  a future Linux GPU driver should bind to.
+- `/framebuffer@b100000`: a `simple-framebuffer` node for Linux early console
+  output. Its `display` phandle points back to `/arti-rtl@b000000`, so the later GPU
+  driver has a standard handoff path from simplefb to the real display controller.
+
+With `CONFIG_FB_SIMPLE` / `CONFIG_FRAMEBUFFER_CONSOLE` enabled, Linux can use this as the
+boot display before the real GPU driver is loaded.
 
 ```yaml
 display:
@@ -156,6 +164,40 @@ display:
   framebuffer_size: 0x800000
 ```
 
+The intended reset-time ABI for GPU RTL is:
+
+- MMIO control base: `0x0B000000`
+- Default framebuffer base: `0x0B100000`
+- Default mode: 1024x768, stride 4096, `a8r8g8b8`
+- Minimal scanout registers are defined in
+  `examples/linux_arti_driver/arti_gpu_abi.h`: framebuffer base, width, height, stride,
+  format, enable, IRQ status, and IRQ mask.
+
+After Linux loads the real GPU driver, that driver should bind to `arti,rtl-gpu`, program
+the display controller registers, and take over the framebuffer from simplefb. If the RTL
+exports interrupt output ports, ARTI wires them to GIC SPI lines starting at 180 and emits
+matching `interrupts` cells in the device tree; this gives future VSYNC IRQ support a DT
+path without changing the boot-display flow.
+
+For early bring-up, `examples/linux_arti_driver/arti_gpu_probe.c` builds into
+`arti_gpu_probe.ko`. It is a minimal platform driver, not a full DRM driver: it binds to
+`arti,rtl-gpu`, maps the `ctrl` and `fb` resources, logs the boot mode, and can optionally
+write a framebuffer color pattern with `fill_pattern=1`.
+
+The next handoff layer is `examples/linux_arti_driver/arti_gpu_drm.c`, which builds into
+`arti_gpu_drm.ko`. It registers a minimal DRM/KMS virtual connector at the boot mode,
+acquires the framebuffer aperture from `simplefb`, programs the scanout ABI, and copies
+DRM shmem framebuffer updates into the RTL framebuffer. Its module dependencies are
+`backlight.ko`, `drm.ko`, `drm_kms_helper.ko`, `drm_client_lib.ko`, and
+`drm_shmem_helper.ko`; the
+initramfs test harness automatically selects this driver when those dependency modules
+are present, otherwise it uses the lightweight probe.
+
+This path intentionally does not provide UEFI/EDK2 graphics. The UEFI menu remains black
+unless a GOP driver is added to firmware or the device is wrapped as firmware-supported
+graphics hardware. For ARTI GPU RTL bring-up, boot Linux directly with `-kernel` and let
+`simple-framebuffer` handle the early display.
+
 `ARTI_DISPLAY=1` enables the framebuffer device in the embedded QEMU model. It is read
 while the model is generated (during `setup_env.sh` or `build_embedded_qemu.sh`), not at
 runtime. If you have already built the model without display support, rerun the setup with
@@ -163,6 +205,14 @@ runtime. If you have already built the model without display support, rerun the 
 
 The `test` and `interactive` modes of `run.sh` always run with `-display none` and exit
 after the test or shell session, so `ARTI_DISPLAY` alone does not open a graphics window.
+The automated Linux test also loads `arti_gpu_probe.ko` when it is present and verifies
+that the `ctrl` and `fb` resources bind successfully after `simplefb` registers.
+
+To exercise the DRM takeover path in the same initramfs test, use:
+
+```bash
+GPU_DRM_TEST=1 ./examples/linux_arti_driver/run_linux_test.sh
+```
 To see the framebuffer, boot the Debian environment and set a QEMU UI backend:
 
 ```bash
@@ -418,7 +468,7 @@ ls -lh /tmp/arti-linux-build/arch/arm64/boot/Image
 head -1 /tmp/arti-linux-build/include/config/kernel.release
 ```
 
-#### 5.3 Build the driver module
+#### 5.3 Build the driver modules
 
 ```bash
 cd "$ARTI_DIR"
@@ -427,10 +477,11 @@ make -C /tmp/arti-linux-build \
     ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules
 ```
 
-Confirm the `.ko` is generated and that vermagic matches the kernel:
+Confirm the `.ko` files are generated and that vermagic matches the kernel:
 
 ```bash
-ls -lh examples/linux_arti_driver/arti_rtl_test.ko
+ls -lh examples/linux_arti_driver/arti_rtl_test.ko \
+       examples/linux_arti_driver/arti_gpu_probe.ko
 strings examples/linux_arti_driver/arti_rtl_test.ko | grep vermagic
 # Should output: vermagic=7.2.0-rc6-... SMP preempt aarch64
 # matching the contents of kernel.release
@@ -515,8 +566,20 @@ Network configuration is applied automatically via cloud-init: on first boot an
 every subsequent boot, so no DHCP is needed.
 
 The cloud-init ISO is generated automatically by `build_cloudinit.sh` (on first boot
-`run_debian.sh` detects it and builds it automatically); it embeds the `.ko` module and
-the network service configuration.
+`run_debian.sh` detects it and builds it automatically); it embeds `arti_rtl_test.ko`,
+`arti_gpu_probe.ko` when present, and the network service configuration.
+
+With display enabled, you can smoke-test the future GPU handoff node from Debian:
+
+```bash
+insmod /root/arti_gpu_probe.ko              # probe only
+dmesg | grep -E "arti-gpu|ARTI GPU"
+rmmod arti_gpu_probe
+insmod /root/arti_gpu_probe.ko fill_pattern=1
+```
+
+The last command intentionally writes a color pattern into the boot framebuffer, so use it
+only when you want to verify that the framebuffer window is live.
 
 #### Prerequisite: the kernel must include the virtio-net driver
 
@@ -601,8 +664,9 @@ If the RTL has interrupt output ports (port names matching patterns such as `irq
    function in `arti_rtl_model.h`
 3. **Registers the QEMU SysBus IRQ**: calls `sysbus_init_irq()` in `arti-rtl.c` to register
    the IRQ output
-4. **Polls interrupt status**: creates a `QEMUTimer` with a 100μs period, sending
-   interrupts to the guest via `qemu_set_irq()`
+4. **Polls interrupt status**: creates a host-clock `QEMUTimer` with a 100μs period,
+   and also samples the RTL IRQ after each guest MMIO transaction before sending
+   edge changes to the guest via `qemu_set_irq()`
 
 The example RTL (`examples/irq_timer/`) demonstrates an AXI-Lite timer with an interrupt
 output; the framework automatically detects the `irq` port and generates complete

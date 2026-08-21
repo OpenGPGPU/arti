@@ -5,6 +5,8 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 
+#include "arti_gpu_abi.h"
+
 #define ARTI_BASE 0x0b000000ULL
 #define ARTI_SIZE 0x1000
 #define ARTI_TEST_VALUE 0x123456a5U
@@ -16,11 +18,28 @@ static int arti_probe(struct platform_device *pdev)
     struct resource *res;
     void __iomem *base;
     u32 value;
+    u32 version;
 
     res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-    base = devm_ioremap_resource(&pdev->dev, res);
-    if (IS_ERR(base))
-        return PTR_ERR(base);
+    /* Keep this legacy loopback test non-exclusive so the GPU probe can
+     * validate the same control aperture in the same initramfs. */
+    base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+    if (!base)
+        return -ENOMEM;
+
+    value = ioread32(base + ARTI_GPU_REG_ID);
+    if (value == ARTI_GPU_ID) {
+        version = ioread32(base + ARTI_GPU_REG_VERSION);
+        if (version != ARTI_GPU_VERSION_1) {
+            dev_err(&pdev->dev, "ARTI GPU FAIL: ID 0x%08x version 0x%08x\n",
+                    value, version);
+            return -ENODEV;
+        }
+        dev_info(&pdev->dev,
+                 "ARTI GPU ABI PASS: ID 0x%08x version 0x%08x\n",
+                 value, version);
+        return 0;
+    }
 
     iowrite32(ARTI_TEST_VALUE, base);
     value = ioread32(base);

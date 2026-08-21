@@ -17,9 +17,11 @@ ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
 KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
+LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
 WORK="${WORK:-/tmp/arti-linux-test}"
 TIMEOUT="${TIMEOUT:-60}"
 SERIAL_LOG="$WORK/serial.log"
+GPU_DRM_TEST="${GPU_DRM_TEST:-0}"
 
 if [ "$(uname -s)" = "Darwin" ]; then
     case ":$PATH:" in
@@ -83,10 +85,23 @@ echo ""
 # 1. Build the init binary and initramfs
 echo "--- building initramfs ---"
 mkdir -p "$WORK/proc" "$WORK/sys" "$WORK/dev"
+rm -f "$WORK/arti_gpu_drm.ko" "$WORK/backlight.ko" "$WORK/drm.ko" \
+      "$WORK/drm_kms_helper.ko" "$WORK/drm_client_lib.ko" \
+      "$WORK/drm_shmem_helper.ko"
 "$CROSS_GCC" -static -O2 \
     -o "$WORK/init" "$SCRIPT_DIR/arti-linux-init.c"
 chmod +x "$WORK/init"
 cp "$SCRIPT_DIR/arti_rtl_test.ko" "$WORK/"
+if [ "$GPU_DRM_TEST" = "1" ]; then
+    cp "$SCRIPT_DIR/arti_gpu_drm.ko" "$WORK/"
+    for drm_module in backlight drm drm_kms_helper drm_client_lib drm_shmem_helper; do
+        drm_path="$(find "$LINUX_BUILD/drivers" -name "$drm_module.ko" -print -quit 2>/dev/null || true)"
+        [ -n "$drm_path" ] || { echo "FAIL: $drm_module.ko not found under $LINUX_BUILD"; exit 1; }
+        cp "$drm_path" "$WORK/"
+    done
+else
+    [ ! -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] || cp "$SCRIPT_DIR/arti_gpu_probe.ko" "$WORK/"
+fi
 ( cd "$WORK" && find . | cpio -o -H newc 2>/dev/null ) | gzip > "$WORK/initramfs.cpio.gz"
 echo "--- initramfs built ($(wc -c < "$WORK/initramfs.cpio.gz") bytes) ---"
 
@@ -110,7 +125,32 @@ echo ""
 echo "=== Serial output (tail) ==="
 tail -12 "$SERIAL_LOG" 2>/dev/null || echo "(no serial output)"
 
-if grep -q "ARTI LINUX PASS" "$SERIAL_LOG" 2>/dev/null; then
+if grep -Eq "ARTI LINUX PASS|ARTI GPU ABI PASS" "$SERIAL_LOG" 2>/dev/null; then
+    if ! grep -q "simplefb registered" "$SERIAL_LOG" 2>/dev/null; then
+        echo "=== SIMPLEFB TEST FAILED ==="
+        echo "--- simplefb registration marker not found ---"
+        exit 1
+    fi
+    if [ "$GPU_DRM_TEST" = "1" ] && \
+       ! grep -q "ARTI GPU DRM PASS" "$SERIAL_LOG" 2>/dev/null; then
+        echo "=== GPU DRM TEST FAILED ==="
+        echo "--- DRM takeover marker not found ---"
+        exit 1
+    elif [ "$GPU_DRM_TEST" != "1" ] && \
+       grep -q "ARTI GPU ABI" "$SERIAL_LOG" 2>/dev/null && \
+       [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && \
+       ! grep -q "ARTI GPU PROBE PASS" "$SERIAL_LOG" 2>/dev/null; then
+        echo "=== GPU PROBE TEST FAILED ==="
+        echo "--- GPU probe marker not found ---"
+        exit 1
+    elif [ "$GPU_DRM_TEST" != "1" ] && \
+       grep -q "ARTI GPU ABI" "$SERIAL_LOG" 2>/dev/null && \
+       [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && \
+       ! grep -q "ARTI GPU IRQ PASS" "$SERIAL_LOG" 2>/dev/null; then
+        echo "=== GPU IRQ TEST FAILED ==="
+        echo "--- GPU VSYNC IRQ marker not found ---"
+        exit 1
+    fi
     echo ""
     echo "=== ARTI LINUX TEST COMPLETE (PASS) ==="
     exit 0

@@ -43,7 +43,7 @@ def _irq_check_func(interrupts):
     lines.append("        return 0;")
     lines.append("    switch (index) {")
     for idx, irq in enumerate(interrupts):
-        lines.append("        case {}: return g_rtl->{} ? 1 : 0;".format(idx, irq["name"]))
+        lines.append("        case {}: tick(); return g_rtl->{} ? 1 : 0;".format(idx, irq["name"]))
     lines.append("        default: return 0;")
     lines.append("    }")
     lines.append("}")
@@ -622,9 +622,11 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
 
     if has_irq:
         lines.append('#include "qemu/timer.h"')
-        lines.append('#include "hw/irq.h"')
+        lines.append('#include "hw/core/irq.h"')
 
     lines.append("")
+    lines.append("#define ARTI_MMIO_SIZE 0x{}u".format(format(mmio_size, "x")))
+    lines.append("#define ARTI_IRQ_COUNT {}u".format(irq_count))
     lines.append('#define TYPE_ARTI_RTL "arti-rtl"')
     lines.append("OBJECT_DECLARE_SIMPLE_TYPE(ArtiRtlState, ARTI_RTL)")
     lines.append("struct ArtiRtlState {")
@@ -643,9 +645,8 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
 
     if has_irq:
         poll_ns = 100000
-        lines.append("static void arti_irq_timer(void *opaque)")
+        lines.append("static void arti_update_irqs(ArtiRtlState *s)")
         lines.append("{")
-        lines.append("    ArtiRtlState *s = opaque;")
         lines.append("    for (unsigned i = 0; i < {}; i++) {{".format(irq_count))
         lines.append("        int level = arti_rtl_model_check_irq(i);")
         lines.append("        if (level != s->irq_prev[i]) {")
@@ -653,7 +654,13 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("            qemu_set_irq(s->irq[i], level);")
         lines.append("        }")
         lines.append("    }")
-        lines.append("    timer_mod(s->irq_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + {});".format(poll_ns))
+        lines.append("}")
+        lines.append("")
+        lines.append("static void arti_irq_timer(void *opaque)")
+        lines.append("{")
+        lines.append("    ArtiRtlState *s = opaque;")
+        lines.append("    arti_update_irqs(s);")
+        lines.append("    timer_mod(s->irq_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST) + {});".format(poll_ns))
         lines.append("}")
         lines.append("")
 
@@ -664,6 +671,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("#define ARTI_FB_BPP 32u")
         lines.append("#define ARTI_FB_STRIDE (ARTI_FB_WIDTH * 4u)")
         lines.append("#define ARTI_FB_SIZE 0x{:x}u".format(config.display_framebuffer_size))
+        lines.append("#define ARTI_MMIO_EXTENT (ARTI_FB_OFFSET + ARTI_FB_SIZE)")
         lines.append("")
         lines.append("static void arti_gfx_invalidate(void *opaque)")
         lines.append("{")
@@ -699,30 +707,37 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
 
     lines.append("static uint64_t arti_read(void *opaque, hwaddr offset, unsigned size)")
     lines.append("{")
-    if has_display:
+    if has_display or has_irq:
         lines.append("    ArtiRtlState *s = opaque;")
     lines.append("    uint64_t data = 0;")
     if has_display:
         lines.append("    if (offset >= ARTI_FB_OFFSET &&")
-        lines.append("        offset < ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
+        lines.append("        offset + size <= ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
         lines.append("        memcpy(&data, s->vram + (offset - ARTI_FB_OFFSET), size);")
         lines.append("        return data;")
         lines.append("    }")
-    lines.append("    if (arti_rtl_model_read(offset, &data, size) != 0)")
+    lines.append("    if (arti_rtl_model_read(offset, &data, size) != 0) {")
+    if has_irq:
+        lines.append("        arti_update_irqs(s);")
     lines.append("        return 0;")
+    lines.append("    }")
+    if has_irq:
+        lines.append("    arti_update_irqs(s);")
     lines.append("    return data;")
     lines.append("}")
     lines.append("static void arti_write(void *opaque, hwaddr offset, uint64_t value, unsigned size)")
     lines.append("{")
-    if has_display:
+    if has_display or has_irq:
         lines.append("    ArtiRtlState *s = opaque;")
         lines.append("    if (offset >= ARTI_FB_OFFSET &&")
-        lines.append("        offset < ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
+        lines.append("        offset + size <= ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
         lines.append("        memcpy(s->vram + (offset - ARTI_FB_OFFSET), &value, size);")
         lines.append("        s->invalidate = true;")
         lines.append("        return;")
-        lines.append("    }")
+    lines.append("    }")
     lines.append("    arti_rtl_model_write(offset, value, size);")
+    if has_irq:
+        lines.append("    arti_update_irqs(s);")
     lines.append("}")
     lines.append("static const MemoryRegionOps arti_ops = {")
     lines.append("    .read = arti_read, .write = arti_write,")
@@ -737,16 +752,16 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    s->vram = g_malloc0(ARTI_FB_SIZE);")
     lines.append("    memory_region_init_io(&s->mmio, OBJECT(s), &arti_ops, s,")
     if has_display:
-        lines.append("                          TYPE_ARTI_RTL, ARTI_FB_OFFSET + ARTI_FB_SIZE);")
+        lines.append("                          TYPE_ARTI_RTL, ARTI_MMIO_EXTENT);")
     else:
-        lines.append("                          TYPE_ARTI_RTL, 0x{});".format(format(mmio_size, "x")))
+        lines.append("                          TYPE_ARTI_RTL, ARTI_MMIO_SIZE);")
     if has_irq:
         lines.append("    for (int i = 0; i < {}; i++) {{".format(irq_count))
         lines.append("        sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->irq[i]);")
         lines.append("        s->irq_prev[i] = -1;")
         lines.append("    }")
-        lines.append("    s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, arti_irq_timer, s);")
-        lines.append("    timer_mod(s->irq_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + {});".format(poll_ns))
+        lines.append("    s->irq_timer = timer_new_ns(QEMU_CLOCK_HOST, arti_irq_timer, s);")
+        lines.append("    timer_mod(s->irq_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST) + {});".format(poll_ns))
     lines.append("    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->mmio);")
     if has_display:
         lines.append("    s->con = qemu_graphic_console_create(dev, 0, &arti_gfx_ops, s);")

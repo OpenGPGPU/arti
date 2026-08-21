@@ -20,7 +20,7 @@ QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
 KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
 DISK="${DISK:-/tmp/arti-dev.qcow2}"
 CIDATA="${CIDATA:-/tmp/cloud-init.iso}"
-SSH_PORT="${SSH_PORT:-2222}"
+SSH_PORT="${SSH_PORT:-}"
 
 find_free_port() {
     python3 - <<'PY'
@@ -36,14 +36,19 @@ finally:
     sock.close()
 PY
 }
-SSH_PORT="$(find_free_port)"
+if [ -z "$SSH_PORT" ]; then
+    SSH_PORT="$(find_free_port)"
+fi
 
 [ -f "$QEMU" ]  || { echo "FAIL: QEMU not found at $QEMU"; exit 1; }
 [ -f "$KERNEL" ] || { echo "FAIL: kernel not found at $KERNEL"; exit 1; }
 [ -f "$DISK" ]   || { echo "FAIL: disk not found at $DISK"; exit 1; }
-# Auto-build cloud-init ISO if missing
-if [ ! -f "$CIDATA" ]; then
-    echo "  cloud-init ISO not found, building..."
+# Auto-build cloud-init ISO if missing or stale relative to driver modules.
+if [ ! -f "$CIDATA" ] || \
+   { [ -f "$SCRIPT_DIR/arti_rtl_test.ko" ] && [ "$SCRIPT_DIR/arti_rtl_test.ko" -nt "$CIDATA" ]; } || \
+   { [ -f "$SCRIPT_DIR/arti_gpu_probe.ko" ] && [ "$SCRIPT_DIR/arti_gpu_probe.ko" -nt "$CIDATA" ]; } || \
+   { [ -f "$SCRIPT_DIR/arti_gpu_drm.ko" ] && [ "$SCRIPT_DIR/arti_gpu_drm.ko" -nt "$CIDATA" ]; }; then
+    echo "  cloud-init ISO missing or stale, building..."
     bash "$SCRIPT_DIR/build_cloudinit.sh" || { echo "FAIL: cannot build cloud-init ISO"; exit 1; }
 fi
 [ -f "$CIDATA" ] || { echo "FAIL: cloud-init not found at $CIDATA"; exit 1; }

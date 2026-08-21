@@ -104,6 +104,9 @@ class FrameworkTest(unittest.TestCase):
             self.assertIn("GraphicHwOps", stub)
             self.assertIn("qemu_graphic_console_create", stub)
             self.assertIn("ARTI_FB_OFFSET", stub)
+            self.assertIn("ARTI_MMIO_SIZE", stub)
+            self.assertIn("ARTI_MMIO_EXTENT", stub)
+            self.assertIn("ARTI_IRQ_COUNT", stub)
             self.assertIn("qemu_console_update_full", stub)
             self.assertIn("memcpy(s->vram", stub)
 
@@ -194,6 +197,22 @@ class MultiProtocolTest(unittest.TestCase):
         self.assertTrue(len(result["interrupts"]) >= 1)
         self.assertEqual(result["interrupts"][0]["name"], "irq")
         self.assertNotIn("irq", result["unknown_ports"])
+
+    def test_generate_arti_gpu_abi_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.yaml"
+            config.write_text((ROOT / "examples/arti_gpu/config.yaml").read_text())
+            (Path(tmp) / "arti_gpu.v").write_text(
+                (ROOT / "examples/arti_gpu/arti_gpu.v").read_text()
+            )
+            output = Path(tmp) / "generated"
+            self.assertEqual(main(["generate", str(config), "--output", str(output)]), 0)
+            wrapper = (output / "embedded/arti_rtl_model.cpp").read_text()
+            stub = (output / "qemu/arti-rtl.c").read_text()
+            self.assertIn("Varti_gpu", wrapper)
+            self.assertIn("arti_rtl_model_check_irq", wrapper)
+            self.assertIn("GraphicHwOps", stub)
+            self.assertIn("ARTI_MMIO_EXTENT", stub)
 
     def test_generate_apb_embedded(self):
         with tempfile.TemporaryDirectory() as tmp:

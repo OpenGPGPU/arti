@@ -26,6 +26,22 @@ static char *u32hex(unsigned v, char *buf) {
     return buf;
 }
 
+static int load_module(const char *path, const char *options, const char *name) {
+    int fd = open(path, O_RDONLY);
+    int ret;
+
+    if (fd < 0)
+        return -1;
+    ret = syscall(__NR_finit_module, fd, options, 0);
+    close(fd);
+    if (ret == 0) {
+        putstr("ARTI Linux init: loaded ");
+        putstr(name);
+        putstr("\r\n");
+    }
+    return ret;
+}
+
 int main(void) {
     /* Open console for output */
     int console = open("/dev/console", O_WRONLY);
@@ -41,16 +57,27 @@ int main(void) {
 
     putstr("ARTI Linux init: loading module...\r\n");
 
-    /* Load the kernel module */
-    int fd = open("/arti_rtl_test.ko", O_RDONLY);
-    if (fd < 0) {
+    /* Load the RTL smoke-test module. */
+    int ret = load_module("/arti_rtl_test.ko", "", "arti_rtl_test");
+    if (ret < 0) {
         putstr("ARTI LINUX INIT FAIL: cannot open .ko\r\n");
     } else {
-        int ret = syscall(__NR_finit_module, fd, "", 0);
-        close(fd);
         char buf[16];
         putstr("ARTI Linux init: finit_module returned 0x");
         putstr(u32hex((unsigned)ret, buf));
+    }
+
+    /* Prefer the DRM handoff when its dependency modules are supplied. */
+    if (access("/drm.ko", F_OK) == 0) {
+        load_module("/backlight.ko", "", "backlight");
+        load_module("/drm.ko", "", "drm");
+        load_module("/drm_kms_helper.ko", "", "drm_kms_helper");
+        load_module("/drm_client_lib.ko", "", "drm_client_lib");
+        load_module("/drm_shmem_helper.ko", "", "drm_shmem_helper");
+        if (load_module("/arti_gpu_drm.ko", "", "arti_gpu_drm") == 0)
+            putstr("ARTI Linux init: DRM driver loaded\r\n");
+    } else if (load_module("/arti_gpu_probe.ko", "", "arti_gpu_probe") == 0) {
+        putstr("ARTI Linux init: GPU probe loaded\r\n");
     }
 
     /* Give the kernel time to flush probe messages to console */

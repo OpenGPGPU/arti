@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Build the cloud-init ISO for the Debian dev environment.
-# This script generates user-data with the embedded .ko module and
+# This script generates user-data with the embedded .ko modules and
 # a systemd service that configures SLIRP static networking.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CI_DIR="$SCRIPT_DIR/cloud-init"
 KO="${KO:-$SCRIPT_DIR/arti_rtl_test.ko}"
+GPU_KO="${GPU_KO:-$SCRIPT_DIR/arti_gpu_probe.ko}"
+DRM_KO="${DRM_KO:-$SCRIPT_DIR/arti_gpu_drm.ko}"
+LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
 OUTPUT="${OUTPUT:-/tmp/cloud-init.iso}"
 
 [ -f "$KO" ] || { echo "FAIL: $KO not found"; exit 1; }
@@ -15,18 +18,48 @@ command -v python3 >/dev/null || { echo "FAIL: python3 not found"; exit 1; }
 
 echo "=== Building cloud-init ISO ==="
 echo "  .ko      : $KO"
+[ ! -f "$GPU_KO" ] || echo "  GPU .ko  : $GPU_KO"
+[ ! -f "$DRM_KO" ] || echo "  DRM .ko  : $DRM_KO"
 echo "  Output   : $OUTPUT"
 
-# Generate user-data with base64-embedded .ko + arti-net.service
+# Generate user-data with base64-embedded .ko files + arti-net.service
 export KO_PATH="$KO"
+export GPU_KO_PATH=""
+[ ! -f "$GPU_KO" ] || export GPU_KO_PATH="$GPU_KO"
+export DRM_KO_PATH=""
+[ ! -f "$DRM_KO" ] || export DRM_KO_PATH="$DRM_KO"
+export DRM_SUPPORT_PATHS="${DRM_SUPPORT_PATHS:-}"
+if [ -f "$DRM_KO" ] && [ -z "$DRM_SUPPORT_PATHS" ]; then
+    for drm_module in backlight drm drm_kms_helper drm_client_lib drm_shmem_helper; do
+        drm_path="$(find "$LINUX_BUILD/drivers" -name "$drm_module.ko" -print -quit 2>/dev/null || true)"
+        [ -z "$drm_path" ] || DRM_SUPPORT_PATHS="${DRM_SUPPORT_PATHS:+$DRM_SUPPORT_PATHS:}$drm_path"
+    done
+    export DRM_SUPPORT_PATHS
+fi
 export CI_DIR="$CI_DIR"
 python3 << 'PYEOF'
 import base64, os
+from pathlib import Path
 
-ko_path = os.environ["KO_PATH"]
-with open(ko_path, "rb") as f:
-    ko_b64 = base64.b64encode(f.read()).decode()
-indented_b64 = "\n".join("        " + ko_b64[i:i+70] for i in range(0, len(ko_b64), 70))
+def module_file(path, guest_path):
+    with open(path, "rb") as f:
+        ko_b64 = base64.b64encode(f.read()).decode()
+    indented_b64 = "\n".join("        " + ko_b64[i:i+70] for i in range(0, len(ko_b64), 70))
+    return f"""  - path: {guest_path}
+    content: !!binary |
+{indented_b64}
+    permissions: '0644'
+"""
+
+write_files = module_file(os.environ["KO_PATH"], "/root/arti_rtl_test.ko")
+gpu_ko_path = os.environ.get("GPU_KO_PATH", "")
+if gpu_ko_path:
+    write_files += module_file(gpu_ko_path, "/root/arti_gpu_probe.ko")
+drm_ko_path = os.environ.get("DRM_KO_PATH", "")
+if drm_ko_path:
+    write_files += module_file(drm_ko_path, "/root/arti_gpu_drm.ko")
+for support_path in filter(None, os.environ.get("DRM_SUPPORT_PATHS", "").split(":")):
+    write_files += module_file(support_path, "/root/" + Path(support_path).name)
 
 user_data = f"""#cloud-config
 bootcmd:
@@ -40,10 +73,7 @@ chpasswd:
       password: arti
 ssh_pwauth: true
 write_files:
-  - path: /root/arti_rtl_test.ko
-    content: !!binary |
-{indented_b64}
-    permissions: '0644'
+{write_files.rstrip()}
   - path: /etc/systemd/system/arti-net.service
     content: |
       [Unit]
