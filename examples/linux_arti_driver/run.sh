@@ -17,7 +17,7 @@ MODE="${1:-test}"
 if [ ! -f /tmp/qemu-arti-build/qemu-system-aarch64 ] || \
    [ ! -f /tmp/arti-linux-build/arch/arm64/boot/Image ] || \
    [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ] || \
-   [ -n "$INTEGRATION_CONFIG" ] || \
+   [ -n "${INTEGRATION_CONFIG:-}" ] || \
    { [ "${GPU_REFERENCE:-0}" = "1" ] && \
      [ ! -f "$SCRIPT_DIR/arti_gpu_probe.ko" ]; } || \
    { [ "${GPU_DRM_TEST:-0}" = "1" ] && [ ! -f "$SCRIPT_DIR/arti_gpu_drm.ko" ]; }; then

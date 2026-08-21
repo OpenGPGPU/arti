@@ -15,6 +15,7 @@ class Integration:
     irq_base: int = 180
     dt_compat: tuple[str, ...] = ("arti,rtl",)
     driver_ko: str = ""
+    driver_deps: str = ""
     driver_marker: str = "ARTI EXTERNAL DRIVER PASS"
     skip_generic_test: bool = False
     gpu_reference: bool = False
@@ -34,6 +35,19 @@ def _scalar(section: str, key: str, default: str) -> str:
 
 def _boolean(value: str) -> bool:
     return value.lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_path(value: str, base: Path) -> str:
+    path = Path(value)
+    return str(path if path.is_absolute() else (base / path).resolve())
+
+
+def _resolve_path_list(value: str, base: Path) -> str:
+    """Resolve colon-separated driver dependency paths from the profile directory."""
+    return ":".join(
+        _resolve_path(item, base) if item else ""
+        for item in value.split(":")
+    )
 
 
 def _compatibles(section: str) -> tuple[str, ...]:
@@ -57,15 +71,17 @@ def load_integration(path: str | Path) -> Integration:
     section = _section(text, "integration")
     driver_ko = _scalar(section, "driver_ko", "")
     if driver_ko:
-        driver_path = Path(driver_ko)
-        if not driver_path.is_absolute():
-            driver_ko = str((config_path.parent / driver_path).resolve())
+        driver_ko = _resolve_path(driver_ko, config_path.parent)
+    driver_deps = _resolve_path_list(
+        _scalar(section, "driver_deps", ""), config_path.parent
+    )
     return Integration(
         config=config,
         config_path=config_path,
         irq_base=int(_scalar(section, "irq_base", "180"), 0),
         dt_compat=_compatibles(section),
         driver_ko=driver_ko,
+        driver_deps=driver_deps,
         driver_marker=_scalar(section, "driver_marker", "ARTI EXTERNAL DRIVER PASS"),
         skip_generic_test=_boolean(_scalar(section, "skip_generic_test", "false")),
         gpu_reference=_boolean(_scalar(section, "gpu_reference", "false")),
@@ -93,6 +109,7 @@ def _shell_values(integration: Integration) -> dict[str, str]:
         "ARTI_DISPLAY_FB_OFFSET": hex(config.display_framebuffer_offset),
         "ARTI_DISPLAY_FB_SIZE": hex(config.display_framebuffer_size),
         "DRIVER_KO": integration.driver_ko,
+        "DRIVER_DEPS": integration.driver_deps,
         "DRIVER_MARKER": integration.driver_marker,
         "SKIP_GENERIC_TEST": "1" if integration.skip_generic_test else "0",
         "GPU_REFERENCE": "1" if integration.gpu_reference else "0",

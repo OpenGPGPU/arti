@@ -220,6 +220,7 @@ class MultiProtocolTest(unittest.TestCase):
         self.assertEqual(integration.config.top_module, "simple_gpio")
         self.assertEqual(integration.config.base_address, 0x0B000000)
         self.assertEqual(integration.dt_compat, ("arti,rtl",))
+        self.assertEqual(integration.driver_deps, "")
         self.assertFalse(integration.gpu_reference)
 
     def test_load_gpu_integration_profile_preserves_compatible_commas(self):
@@ -229,6 +230,34 @@ class MultiProtocolTest(unittest.TestCase):
         self.assertEqual(integration.config.top_module, "arti_gpu")
         self.assertEqual(integration.dt_compat, ("arti,rtl-gpu", "arti,rtl"))
         self.assertTrue(integration.gpu_reference)
+
+    def test_load_integration_profile_resolves_driver_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profiles" / "gpu.yaml"
+            profile.parent.mkdir()
+            profile.write_text(
+                "rtl:\n"
+                "  top_module: my_gpu\n"
+                "  source_files: [my_gpu.v]\n"
+                "integration:\n"
+                "  driver_ko: driver/my_gpu.ko\n"
+                "  driver_deps: deps/drm.ko:deps/helper.ko\n"
+            )
+
+            integration = load_integration(profile)
+
+            self.assertEqual(
+                integration.driver_ko,
+                str((profile.parent / "driver/my_gpu.ko").resolve()),
+            )
+            self.assertEqual(
+                integration.driver_deps,
+                ":".join(
+                    str((profile.parent / path).resolve())
+                    for path in ("deps/drm.ko", "deps/helper.ko")
+                ),
+            )
 
     @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
                          "Icarus Verilog is unavailable")
