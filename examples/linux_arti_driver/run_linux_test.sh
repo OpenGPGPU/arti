@@ -15,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 . "$SCRIPT_DIR/integration_env.sh"
+. "$SCRIPT_DIR/driver_preflight.sh"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
 QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
@@ -112,59 +113,7 @@ KERNEL_RELEASE=""
 if [ -f "$KERNEL_RELEASE_FILE" ]; then
     KERNEL_RELEASE="$(tr -d '[:space:]' < "$KERNEL_RELEASE_FILE")"
 fi
-
-if [ -n "$DRIVER_KO" ]; then
-    DRIVER_MANIFEST="${DRIVER_MANIFEST:-${DRIVER_KO%.ko}.deps}"
-    if [ -f "$DRIVER_MANIFEST" ]; then
-        manifest_release="$(sed -n 's/^kernel_release=//p' "$DRIVER_MANIFEST" | head -1)"
-        if [ -n "$manifest_release" ] && [ -n "$KERNEL_RELEASE" ] && \
-           [ "$manifest_release" != "$KERNEL_RELEASE" ]; then
-            echo "FAIL: driver manifest kernel release mismatch: $manifest_release != $KERNEL_RELEASE"
-            echo "  Rebuild the driver with build_driver.sh against $LINUX_BUILD"
-            exit 1
-        fi
-        while IFS='=' read -r manifest_key manifest_value; do
-            [ "$manifest_key" = "dependency" ] || continue
-            manifest_path="${manifest_value#*:}"
-            [ -f "$manifest_path" ] || continue
-            DRIVER_DEPS="${DRIVER_DEPS:+$DRIVER_DEPS:}$manifest_path"
-        done < "$DRIVER_MANIFEST"
-    fi
-fi
-
-module_vermagic() {
-    local module="$1" value=""
-    if command -v modinfo >/dev/null 2>&1; then
-        value="$(modinfo -F vermagic "$module" 2>/dev/null || true)"
-    fi
-    if [ -z "$value" ]; then
-        value="$(strings "$module" 2>/dev/null | sed -n 's/^vermagic=//p' | head -1 || true)"
-    fi
-    printf '%s\n' "$value" | awk '{print $1}'
-}
-
-check_module_kernel() {
-    local module="$1" actual
-    [ -n "$KERNEL_RELEASE" ] || {
-        echo "FAIL: kernel release metadata not found at $KERNEL_RELEASE_FILE"
-        echo "  Set LINUX_BUILD to the configured kernel build directory"
-        exit 1
-    }
-    actual="$(module_vermagic "$module")"
-    [ -n "$actual" ] || {
-        echo "FAIL: cannot read vermagic from $module"
-        exit 1
-    }
-    [ "$actual" = "$KERNEL_RELEASE" ] || {
-        echo "FAIL: vermagic mismatch for $(basename "$module"): $actual != $KERNEL_RELEASE"
-        echo "  Rebuild the module with build_driver.sh against $LINUX_BUILD"
-        exit 1
-    }
-}
-
-if [ -n "$DRIVER_KO" ]; then
-    check_module_kernel "$DRIVER_KO"
-fi
+arti_driver_preflight || exit 1
 
 if [ "$SKIP_GENERIC_TEST" != "1" ] && [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ]; then
     echo "FAIL: arti_rtl_test.ko not found at $SCRIPT_DIR/"
@@ -208,28 +157,13 @@ fi
 if [ -n "$DRIVER_KO" ]; then
     STAGED_DEP_NAMES=""
 
-    dependency_path() {
-        local name="$1" candidate
-        local -a candidates=()
-        IFS=: read -r -a candidates <<< "$DRIVER_DEPS"
-        for candidate in "${candidates[@]-}"; do
-            [ -n "$candidate" ] || continue
-            if [ "$(basename "$candidate" .ko)" = "$name" ] && [ -f "$candidate" ]; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-        done
-        find "$LINUX_BUILD" -type f -name "$name.ko" -print -quit 2>/dev/null
-    }
-
     stage_dependency() {
         local name="$1" path dep_line dep dep_path
         case ",$STAGED_DEP_NAMES," in
             *,"$name",*) return 0 ;;
         esac
-        path="$(dependency_path "$name")"
+        path="$(arti_driver_dependency_path "$name")"
         [ -n "$path" ] || { echo "FAIL: dependency $name.ko not found; set DRIVER_DEPS"; exit 1; }
-        check_module_kernel "$path"
         dep_line="$(strings "$path" | sed -n 's/^depends=//p' | head -1 || true)"
         if [ -n "$dep_line" ]; then
             IFS=',' read -r -a deps <<< "$dep_line"

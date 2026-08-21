@@ -378,6 +378,52 @@ class MultiProtocolTest(unittest.TestCase):
             self.assertIn("vermagic mismatch for helper.ko", output)
             self.assertNotIn("dependency helper.ko not found", output)
 
+    def test_linux_integration_preflight_passes_without_qemu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "integration.yaml"
+            rtl = root / "my_gpu.v"
+            rtl.write_text("module my_gpu; endmodule\n")
+            profile.write_text(
+                "rtl:\n"
+                "  top_module: my_gpu\n"
+                "  source_files: [my_gpu.v]\n"
+                "bridge:\n"
+                "  base_address: 0x0B000000\n"
+                "integration:\n"
+                "  skip_generic_test: true\n"
+            )
+
+            linux_build = root / "linux-build"
+            release_file = linux_build / "include/config/kernel.release"
+            release_file.parent.mkdir(parents=True)
+            release_file.write_text("expected-release\n")
+            (root / "Image").write_bytes(b"kernel")
+            qemu = root / "qemu-system-aarch64"
+            qemu.write_text("#!/bin/sh\necho QEMU MUST NOT RUN\n")
+            qemu.chmod(0o755)
+
+            environment = {
+                **os.environ,
+                "INTEGRATION_CONFIG": str(profile),
+                "QEMU": str(qemu),
+                "KERNEL": str(root / "Image"),
+                "LINUX_BUILD": str(linux_build),
+            }
+            result = subprocess.run(
+                ["bash", str(ROOT / "examples/linux_arti_driver/check_integration.sh")],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            output = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, output)
+            self.assertIn("preflight PASS", output)
+            self.assertNotIn("QEMU MUST NOT RUN", output)
+
     @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
                          "Icarus Verilog is unavailable")
     def test_arti_gpu_rtl_smoke(self):

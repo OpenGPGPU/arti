@@ -91,6 +91,14 @@ the harness looks for `<driver>.deps` next to `driver_ko`. The harness also sear
 `LINUX_BUILD` for kernel-provided dependencies. Environment variables such as
 `ARTI_MMIO_BASE` and `DRIVER_KO` remain supported as command-line overrides.
 
+Run the preflight check before a full boot test to validate the selected profile and
+external driver without starting QEMU:
+
+```bash
+INTEGRATION_CONFIG=/path/to/my_gpu.yaml \
+  ./examples/linux_arti_driver/check_integration.sh
+```
+
 ## Quick start
 
 No third-party Python package is required:
