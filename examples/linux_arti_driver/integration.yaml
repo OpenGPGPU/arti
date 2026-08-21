@@ -27,6 +27,7 @@ integration:
   dt_compat: ["arti,rtl"]
   driver_ko: ""
   driver_deps: ""
+  driver_manifest: ""
   driver_marker: "ARTI EXTERNAL DRIVER PASS"
   skip_generic_test: false
   gpu_reference: false

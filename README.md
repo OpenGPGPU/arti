@@ -55,8 +55,8 @@ The file combines the normal ARTI RTL/bridge/display configuration with integrat
 metadata:
 
 - `integration.irq_base` and `integration.dt_compat` describe the generated device tree
-- `integration.driver_ko` and `integration.driver_deps` select an optional external
-  Linux module and its dependency search paths
+- `integration.driver_ko`, `integration.driver_deps`, and `integration.driver_manifest`
+  select an optional external Linux module, dependency search paths, and manifest
 - `integration.driver_marker` describes the success marker printed by that module
 - `integration.skip_generic_test` controls the generic smoke module
 - `integration.gpu_reference` identifies the repository's reference-only GPU example
@@ -81,13 +81,15 @@ integration:
   dt_compat: ["vendor,my-gpu", "arti,rtl"]
   driver_ko: driver/my_gpu.ko
   driver_deps: deps/drm.ko:deps/helper.ko
+  driver_manifest: manifests/my_gpu.deps
   driver_marker: "MY GPU PASS"
   skip_generic_test: true
 ```
 
-`driver_deps` is a colon-separated list. The harness also searches `LINUX_BUILD` for
-kernel-provided dependencies. Environment variables such as `ARTI_MMIO_BASE` and
-`DRIVER_KO` remain supported as command-line overrides.
+`driver_deps` is a colon-separated list. `driver_manifest` is optional; when omitted,
+the harness looks for `<driver>.deps` next to `driver_ko`. The harness also searches
+`LINUX_BUILD` for kernel-provided dependencies. Environment variables such as
+`ARTI_MMIO_BASE` and `DRIVER_KO` remain supported as command-line overrides.
 
 ## Quick start
 

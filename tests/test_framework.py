@@ -222,6 +222,7 @@ class MultiProtocolTest(unittest.TestCase):
         self.assertEqual(integration.config.base_address, 0x0B000000)
         self.assertEqual(integration.dt_compat, ("arti,rtl",))
         self.assertEqual(integration.driver_deps, "")
+        self.assertEqual(integration.driver_manifest, "")
         self.assertFalse(integration.gpu_reference)
 
     def test_load_gpu_integration_profile_preserves_compatible_commas(self):
@@ -244,6 +245,7 @@ class MultiProtocolTest(unittest.TestCase):
                 "integration:\n"
                 "  driver_ko: driver/my_gpu.ko\n"
                 "  driver_deps: deps/drm.ko:deps/helper.ko\n"
+                "  driver_manifest: manifests/my_gpu.deps\n"
             )
 
             integration = load_integration(profile)
@@ -258,6 +260,10 @@ class MultiProtocolTest(unittest.TestCase):
                     str((profile.parent / path).resolve())
                     for path in ("deps/drm.ko", "deps/helper.ko")
                 ),
+            )
+            self.assertEqual(
+                integration.driver_manifest,
+                str((profile.parent / "manifests/my_gpu.deps").resolve()),
             )
 
     def test_linux_harness_rejects_driver_vermagic_before_qemu(self):

@@ -16,6 +16,7 @@ class Integration:
     dt_compat: tuple[str, ...] = ("arti,rtl",)
     driver_ko: str = ""
     driver_deps: str = ""
+    driver_manifest: str = ""
     driver_marker: str = "ARTI EXTERNAL DRIVER PASS"
     skip_generic_test: bool = False
     gpu_reference: bool = False
@@ -75,6 +76,9 @@ def load_integration(path: str | Path) -> Integration:
     driver_deps = _resolve_path_list(
         _scalar(section, "driver_deps", ""), config_path.parent
     )
+    driver_manifest = _scalar(section, "driver_manifest", "")
+    if driver_manifest:
+        driver_manifest = _resolve_path(driver_manifest, config_path.parent)
     return Integration(
         config=config,
         config_path=config_path,
@@ -82,6 +86,7 @@ def load_integration(path: str | Path) -> Integration:
         dt_compat=_compatibles(section),
         driver_ko=driver_ko,
         driver_deps=driver_deps,
+        driver_manifest=driver_manifest,
         driver_marker=_scalar(section, "driver_marker", "ARTI EXTERNAL DRIVER PASS"),
         skip_generic_test=_boolean(_scalar(section, "skip_generic_test", "false")),
         gpu_reference=_boolean(_scalar(section, "gpu_reference", "false")),
@@ -110,6 +115,7 @@ def _shell_values(integration: Integration) -> dict[str, str]:
         "ARTI_DISPLAY_FB_SIZE": hex(config.display_framebuffer_size),
         "DRIVER_KO": integration.driver_ko,
         "DRIVER_DEPS": integration.driver_deps,
+        "DRIVER_MANIFEST": integration.driver_manifest,
         "DRIVER_MARKER": integration.driver_marker,
         "SKIP_GENERIC_TEST": "1" if integration.skip_generic_test else "0",
         "GPU_REFERENCE": "1" if integration.gpu_reference else "0",
