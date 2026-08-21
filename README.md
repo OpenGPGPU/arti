@@ -531,7 +531,50 @@ ls -lh /tmp/arti-linux-build/arch/arm64/boot/Image
 head -1 /tmp/arti-linux-build/include/config/kernel.release
 ```
 
-#### 5.3 Build the driver modules
+#### 5.3 Build an external driver module
+
+`driver.ko` must be built against the same configured kernel tree used to boot QEMU.
+Use the helper below instead of manually reconstructing the kernel build command. It
+accepts either a driver directory with its own Kbuild/Makefile or a single C source:
+
+```bash
+# Existing multi-file driver directory
+./examples/linux_arti_driver/build_driver.sh \
+  --dir /path/to/my_gpu_driver \
+  --output /tmp/my_gpu-ko
+
+# Single source driver
+./examples/linux_arti_driver/build_driver.sh \
+  --source /path/to/my_gpu.c \
+  --name my_gpu \
+  --output /tmp/my_gpu-ko
+```
+
+The helper automatically uses `/tmp/arti-linux-build`, detects the AArch64 cross
+compiler, invokes the kernel's out-of-tree module build, and checks the resulting
+module `vermagic` against `kernel.release`. Override `LINUX_BUILD` or
+`CROSS_COMPILE` when using a different kernel build:
+
+```bash
+LINUX_BUILD=/path/to/linux-build \
+CROSS_COMPILE=aarch64-linux-gnu- \
+  ./examples/linux_arti_driver/build_driver.sh --dir /path/to/my_gpu_driver
+```
+
+Then run the module in the generic ARTI harness:
+
+```bash
+DRIVER_KO=/tmp/my_gpu-ko/my_gpu.ko \
+DRIVER_MARKER='MY GPU PASS' \
+SKIP_GENERIC_TEST=1 \
+  ./examples/linux_arti_driver/run_linux_test.sh
+```
+
+The driver's device-tree compatible and RTL are configured separately in an
+`integration.yaml` profile. The helper intentionally knows nothing about the driver's
+ABI or source-tree layout beyond standard Linux external-module conventions.
+
+#### 5.4 Build the repository example modules
 
 ```bash
 cd "$ARTI_DIR"
@@ -554,9 +597,9 @@ GPU_REFERENCE=1 make -C /tmp/arti-linux-build \
     CROSS_COMPILE=aarch64-linux-gnu- modules
 ```
 
-#### 5.4 Run the end-to-end test in one click
+#### 5.5 Run the end-to-end test in one click
 
-After all of 5.1–5.3 above are complete, run:
+After all of 5.1–5.4 above are complete, run:
 
 ```bash
 cd "$ARTI_DIR"
@@ -594,7 +637,7 @@ KERNEL=/tmp/arti-linux-build/arch/arm64/boot/Image \
 examples/linux_arti_driver/run_linux_test.sh
 ```
 
-#### 5.5 Run manually (for debugging)
+#### 5.6 Run manually (for debugging)
 
 Start QEMU directly, without any extra processes or parameters:
 
@@ -610,7 +653,7 @@ Note: in embedded mode the `-chardev socket` parameter is no longer needed. The 
 address is `0x0B000000`, with a window size of `0x1000`.
 
 
-### 5.6 Full Debian development environment (with network)
+### 5.7 Full Debian development environment (with network)
 
 If you need a real, usable Linux environment (systemd, apt, gcc, etc.), you can boot a
 full Debian rootfs:
@@ -691,7 +734,7 @@ ninja -C /tmp/qemu-arti-build qemu-system-aarch64
 > The solution is to set the built-in option directly with
 > `meson configure -Dpkg_config_path=...`.
 
-### 5.7 Supported bus protocols and interrupts
+### 5.8 Supported bus protocols and interrupts
 
 ARTI automatically detects the following 5 bus protocols and generates the matching
 embedded model code:
