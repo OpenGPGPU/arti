@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import socket
 import struct
@@ -258,6 +259,53 @@ class MultiProtocolTest(unittest.TestCase):
                     for path in ("deps/drm.ko", "deps/helper.ko")
                 ),
             )
+
+    def test_linux_harness_rejects_driver_vermagic_before_qemu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_compiler = fake_bin / "aarch64-linux-gnu-gcc"
+            fake_compiler.write_text("#!/bin/sh\nexit 0\n")
+            fake_compiler.chmod(0o755)
+
+            linux_build = root / "linux-build"
+            release_file = linux_build / "include/config/kernel.release"
+            release_file.parent.mkdir(parents=True)
+            release_file.write_text("expected-release\n")
+            (linux_build / "Makefile").write_text("# test fixture\n")
+
+            driver = root / "my_gpu.ko"
+            driver.write_text("vermagic=wrong-release SMP aarch64\n")
+            kernel = root / "Image"
+            kernel.write_bytes(b"kernel")
+            qemu = root / "qemu-system-aarch64"
+            qemu.write_text("#!/bin/sh\necho QEMU SHOULD NOT RUN\n")
+            qemu.chmod(0o755)
+
+            environment = {
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "QEMU": str(qemu),
+                "KERNEL": str(kernel),
+                "LINUX_BUILD": str(linux_build),
+                "DRIVER_KO": str(driver),
+                "SKIP_GENERIC_TEST": "1",
+                "WORK": str(root / "work"),
+            }
+            result = subprocess.run(
+                ["bash", str(ROOT / "examples/linux_arti_driver/run_linux_test.sh")],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("vermagic mismatch", output)
+            self.assertNotIn("QEMU SHOULD NOT RUN", output)
 
     @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
                          "Icarus Verilog is unavailable")

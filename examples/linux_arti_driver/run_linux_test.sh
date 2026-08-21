@@ -105,6 +105,46 @@ fi
 
 [ -f "$KERNEL" ] || { echo "FAIL: kernel Image not found at $KERNEL"; echo "  Build it first (see README section 5.2)"; exit 1; }
 
+KERNEL_RELEASE_FILE="$LINUX_BUILD/include/config/kernel.release"
+KERNEL_RELEASE=""
+if [ -f "$KERNEL_RELEASE_FILE" ]; then
+    KERNEL_RELEASE="$(tr -d '[:space:]' < "$KERNEL_RELEASE_FILE")"
+fi
+
+module_vermagic() {
+    local module="$1" value=""
+    if command -v modinfo >/dev/null 2>&1; then
+        value="$(modinfo -F vermagic "$module" 2>/dev/null || true)"
+    fi
+    if [ -z "$value" ]; then
+        value="$(strings "$module" 2>/dev/null | sed -n 's/^vermagic=//p' | head -1 || true)"
+    fi
+    printf '%s\n' "$value" | awk '{print $1}'
+}
+
+check_module_kernel() {
+    local module="$1" actual
+    [ -n "$KERNEL_RELEASE" ] || {
+        echo "FAIL: kernel release metadata not found at $KERNEL_RELEASE_FILE"
+        echo "  Set LINUX_BUILD to the configured kernel build directory"
+        exit 1
+    }
+    actual="$(module_vermagic "$module")"
+    [ -n "$actual" ] || {
+        echo "FAIL: cannot read vermagic from $module"
+        exit 1
+    }
+    [ "$actual" = "$KERNEL_RELEASE" ] || {
+        echo "FAIL: vermagic mismatch for $(basename "$module"): $actual != $KERNEL_RELEASE"
+        echo "  Rebuild the module with build_driver.sh against $LINUX_BUILD"
+        exit 1
+    }
+}
+
+if [ -n "$DRIVER_KO" ]; then
+    check_module_kernel "$DRIVER_KO"
+fi
+
 if [ "$SKIP_GENERIC_TEST" != "1" ] && [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ]; then
     echo "FAIL: arti_rtl_test.ko not found at $SCRIPT_DIR/"
     echo "  Build it first (see README section 5.3), or set SKIP_GENERIC_TEST=1 with DRIVER_KO"
@@ -168,6 +208,7 @@ if [ -n "$DRIVER_KO" ]; then
         esac
         path="$(dependency_path "$name")"
         [ -n "$path" ] || { echo "FAIL: dependency $name.ko not found; set DRIVER_DEPS"; exit 1; }
+        check_module_kernel "$path"
         dep_line="$(strings "$path" | sed -n 's/^depends=//p' | head -1 || true)"
         if [ -n "$dep_line" ]; then
             IFS=',' read -r -a deps <<< "$dep_line"

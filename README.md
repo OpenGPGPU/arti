@@ -611,6 +611,10 @@ SKIP_GENERIC_TEST=1 \
   ./examples/linux_arti_driver/run_linux_test.sh
 ```
 
+Before starting QEMU, the harness checks the external module and each staged dependency
+against `LINUX_BUILD/include/config/kernel.release`. A vermagic mismatch or missing
+dependency therefore fails immediately with the module path that needs rebuilding.
+
 For the repository reference DRM driver, use the reference mode so the matching RTL and
 device-tree profile are selected explicitly:
 
