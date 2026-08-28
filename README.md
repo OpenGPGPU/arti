@@ -124,6 +124,53 @@ Run the framework tests with:
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
+## MCP server
+
+ARTI includes a dependency-free STDIO MCP server. Its project tools are:
+
+- `inspect_rtl` parses RTL and returns the inferred protocol, port mapping, interrupts,
+  missing signals, and unknown ports.
+- `generate_project` generates the co-simulation/QEMU project from an ARTI YAML config.
+
+Its full-system Linux/QEMU workflow tools are:
+
+- `check_full_system_requirements` runs the integration preflight without booting QEMU.
+- `prepare_full_system_simulation` starts dependency, QEMU, Linux, driver, and embedded
+  RTL setup as a background job.
+- `run_full_system_simulation` starts either the automated Linux test or persistent
+  Debian environment as a background job.
+- `get_full_system_job` polls job status and `read_full_system_log` retrieves output.
+- `stop_full_system_job` terminates a running setup or QEMU job.
+
+The MCP server describes this workflow to the model through server instructions. A
+typical agent flow is inspect RTL, generate or select an integration profile, run the
+preflight, prepare missing artifacts with the user's approval, start the simulation,
+then poll the job and inspect its logs. Long builds run out of process and remain
+queryable under `/tmp/arti-mcp-jobs`, avoiding the normal MCP per-tool timeout.
+
+Run it directly with:
+
+```bash
+PYTHONPATH=src python3 -m arti.mcp
+```
+
+Register a source checkout with Codex (use absolute paths):
+
+```bash
+codex mcp add arti \
+  --env PYTHONPATH=/absolute/path/to/arti/src \
+  -- /usr/bin/python3 -m arti.mcp
+```
+
+If ARTI is installed as a package, register the installed entry point instead:
+
+```bash
+codex mcp add arti -- arti-mcp
+```
+
+Verify the configuration with `codex mcp get arti` or `codex mcp list`. Restart the
+Codex client (or open a new session) after changing its MCP configuration.
+
 For the full Linux kernel driver end-to-end test (guest `insmod` -> MMIO -> QEMU -> RTL
 loopback), see [section 5](#5-linux-kernel-driver-end-to-end-test). Quick run after
 prerequisites are built:

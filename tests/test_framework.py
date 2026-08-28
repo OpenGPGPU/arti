@@ -10,8 +10,15 @@ import unittest
 from pathlib import Path
 
 from arti.cli import main
+from arti.full_system import (
+    _start_job,
+    get_full_system_job,
+    read_full_system_log,
+    stop_full_system_job,
+)
 from arti.inference import infer_protocol
 from arti.integration import load_integration
+from arti.mcp import _response
 from arti.parser import parse_verilog
 
 
@@ -155,6 +162,109 @@ class FrameworkTest(unittest.TestCase):
             report = Path(tmp) / "report.json"
             self.assertEqual(main(["inspect", str(RTL), "--output", str(report)]), 0)
             self.assertEqual(json.loads(report.read_text())["inference"]["protocol"], "axi-lite")
+
+    def test_mcp_lists_and_calls_tools(self):
+        listed = _response({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertEqual(
+            [tool["name"] for tool in listed["result"]["tools"]],
+            [
+                "inspect_rtl",
+                "generate_project",
+                "check_full_system_requirements",
+                "prepare_full_system_simulation",
+                "run_full_system_simulation",
+                "get_full_system_job",
+                "read_full_system_log",
+                "stop_full_system_job",
+            ],
+        )
+
+        called = _response({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "inspect_rtl",
+                "arguments": {"rtl": str(RTL), "top": "simple_gpio"},
+            },
+        })
+        result = called["result"]
+        self.assertNotIn("isError", result)
+        self.assertEqual(result["structuredContent"]["inference"]["protocol"], "axi-lite")
+
+    def test_mcp_generates_project_and_reports_tool_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "generated"
+            generated = _response({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "generate_project",
+                    "arguments": {"config": str(CONFIG), "output": str(output)},
+                },
+            })["result"]
+            self.assertEqual(generated["structuredContent"]["protocol"], "axi-lite")
+            self.assertTrue((output / "reports/inference_report.json").is_file())
+
+            failed = _response({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "inspect_rtl", "arguments": {"rtl": str(output / "missing.v")}},
+            })["result"]
+            self.assertTrue(failed["isError"])
+            self.assertIn("ARTI error", failed["content"][0]["text"])
+
+    def test_full_system_background_job_lifecycle(self):
+        import arti.full_system as full_system
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_job_root = full_system.JOB_ROOT
+            full_system.JOB_ROOT = Path(tmp)
+            try:
+                started = _start_job(
+                    "test",
+                    ["bash", "-c", "echo ARTI-JOB-PASS"],
+                    os.environ.copy(),
+                    CONFIG,
+                )
+                job_id = started["job_id"]
+                for _ in range(100):
+                    status = get_full_system_job({"job_id": job_id})
+                    if status["status"] in ("succeeded", "failed"):
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(status["status"], "succeeded")
+                log = read_full_system_log({"job_id": job_id, "tail_lines": 20})
+                self.assertIn("ARTI-JOB-PASS", log["output"])
+            finally:
+                full_system.JOB_ROOT = original_job_root
+
+    def test_full_system_background_job_can_be_stopped(self):
+        import arti.full_system as full_system
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_job_root = full_system.JOB_ROOT
+            full_system.JOB_ROOT = Path(tmp)
+            try:
+                started = _start_job(
+                    "test",
+                    ["bash", "-c", "sleep 30"],
+                    os.environ.copy(),
+                    CONFIG,
+                )
+                job_id = started["job_id"]
+                for _ in range(100):
+                    status = get_full_system_job({"job_id": job_id})
+                    if status["status"] == "running":
+                        break
+                    time.sleep(0.02)
+                stopped = stop_full_system_job({"job_id": job_id})
+                self.assertTrue(stopped["stopped"])
+                self.assertEqual(stopped["status"], "stopped")
+            finally:
+                full_system.JOB_ROOT = original_job_root
 
 
 if __name__ == "__main__":
