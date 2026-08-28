@@ -292,7 +292,7 @@ ensure_qemu_build_deps() {
 
 patch_qemu_for_arti() {
     local qemu_src="$1"
-    python3 - "$qemu_src" <<'PY' || fail "Failed to patch QEMU for arti-rtl"
+    "$ARTI_PYTHON" - "$qemu_src" <<'PY' || fail "Failed to patch QEMU for arti-rtl"
 import pathlib
 import re
 import sys
@@ -529,7 +529,7 @@ ensure_macos_bee_headers() {
 
 patch_linux_for_macos() {
     [ "$OS_NAME" = "Darwin" ] || return 0
-    python3 - "$LINUX_SRC" <<'PY' || fail "Failed to patch Linux source for macOS"
+    "$ARTI_PYTHON" - "$LINUX_SRC" <<'PY' || fail "Failed to patch Linux source for macOS"
 import pathlib
 import sys
 
@@ -643,7 +643,7 @@ sedi() {
 step "Step 0/7: Checking system dependencies"
 
 check_cmd verilator
-check_cmd python3
+check_cmd "$ARTI_PYTHON"
 check_cmd g++
 check_cmd git
 check_cmd curl
@@ -662,7 +662,7 @@ fi
 info "Cross compiler: $CROSS_GCC (CROSS_COMPILE=$CROSS_COMPILE)"
 
 # Check Python yaml module for cloud-init validation
-python3 -c "import yaml" 2>/dev/null || warn "PyYAML not found (cloud-init YAML validation will be skipped)"
+"$ARTI_PYTHON" -c "import yaml" 2>/dev/null || warn "PyYAML not found (cloud-init YAML validation will be skipped)"
 
 info "System dependencies OK"
 
@@ -675,9 +675,8 @@ if [ -f "$QEMU_TOOLS/bin/ninja" ]; then
     info "ninja already installed at $QEMU_TOOLS/bin/ninja"
 else
     info "Installing ninja via pip --target..."
-    pip3 install --target="$QEMU_TOOLS" ninja 2>/dev/null || \
-        python3 -m pip install --target="$QEMU_TOOLS" ninja || \
-        fail "Failed to install ninja. Try: pip3 install --target=$QEMU_TOOLS ninja"
+    "$ARTI_PYTHON" -m pip install --target="$QEMU_TOOLS" ninja || \
+        fail "Failed to install ninja. Try: $ARTI_PYTHON -m pip install --target=$QEMU_TOOLS ninja"
     [ -f "$QEMU_TOOLS/bin/ninja" ] || fail "ninja installation failed"
 fi
 export PATH="$QEMU_TOOLS/bin:$PATH"
@@ -706,12 +705,17 @@ cp "$SCRIPT_DIR/../../src/arti/qemu_backend.py" /dev/null 2>/dev/null || true
 # using the selected RTL model (simple_gpio by default)
 GEN_DIR="$WORK_DIR/arti-embedded-gen"
 mkdir -p "$GEN_DIR"
+# A generated Chisel top is commonly split across several .sv files.  The
+# legacy single-source variable remains the default; callers may provide a
+# comma-separated YAML list through ARTI_RTL_SOURCE_LIST to include all module
+# dependencies in the embedded Verilator build.
+ARTI_RTL_SOURCE_LIST="${ARTI_RTL_SOURCE_LIST:-$ARTI_RTL_SOURCE}"
 cat > "$GEN_DIR/config.yaml" << YAMLEOF
 project:
   name: arti_embedded
 rtl:
   top_module: $ARTI_RTL_TOP
-  source_files: [$ARTI_RTL_SOURCE]
+  source_files: [$ARTI_RTL_SOURCE_LIST]
   clk_freq_mhz: 100
 bridge:
   protocol: auto
@@ -730,7 +734,7 @@ display:
 YAMLEOF
 
 CONFIG_STAMP="$GEN_DIR/generated/.config.stamp"
-CONFIG_SIGNATURE="$(python3 -c 'import hashlib, pathlib, sys; h = hashlib.sha256(); [h.update(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]; print(h.hexdigest())' "$GEN_DIR/config.yaml" "$ARTI_RTL_SOURCE")"
+CONFIG_SIGNATURE="$($ARTI_PYTHON -c 'import hashlib, pathlib, sys; h = hashlib.sha256(); [h.update(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]; print(h.hexdigest())' "$GEN_DIR/config.yaml" "$ARTI_RTL_SOURCE")"
 
 EXPECT_DISPLAY=0
 if [ "${ARTI_DISPLAY:-0}" = "1" ] || [ "${ARTI_DISPLAY:-0}" = "true" ]; then
@@ -755,7 +759,7 @@ if [ -f "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" ] && \
 else
     info "Generating embedded model..."
     rm -rf "$GEN_DIR/generated"
-    PYTHONPATH="$ARTI_DIR/src" python3 -c "
+    PYTHONPATH="$ARTI_DIR/src" "$ARTI_PYTHON" -c "
 import sys; sys.path.insert(0, '$ARTI_DIR/src')
 from arti.cli import main
 main(['generate', '$GEN_DIR/config.yaml', '--output', '$GEN_DIR/generated'])
