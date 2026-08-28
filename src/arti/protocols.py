@@ -83,11 +83,13 @@ def _init_func(mod, clk, rst, idle_body):
     lines.append("    g_ctx->commandArgs(0, argv);")
     lines.append('    g_rtl = new V{}{{g_ctx, "ARTI_RTL"}};'.format(mod))
     lines.append("    g_rtl->{} = 0;".format(clk))
-    lines.append("    g_rtl->{} = 0;".format(rst))
+    reset_asserted = 1 if rst == "reset" else 0
+    reset_deasserted = 0 if rst == "reset" else 1
+    lines.append("    g_rtl->{} = {};".format(rst, reset_asserted))
     lines.append(idle_body)
     lines.append("    g_rtl->eval();")
     lines.append("    tick();")
-    lines.append("    g_rtl->{} = 1;".format(rst))
+    lines.append("    g_rtl->{} = {};".format(rst, reset_deasserted))
     lines.append("    g_rtl->eval();")
     lines.append("    tick();")
     lines.append("}")

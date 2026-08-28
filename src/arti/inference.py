@@ -59,6 +59,12 @@ def infer_protocol(signature: ModuleSignature) -> dict:
     mapping = mappings[best["protocol"]]
     for signal in rules.get("optional", []) + rules.get("clock", []) + rules.get("reset", []):
         mapping[signal] = _find_signal(signature.ports, signal)
+    # Chisel emits implicit top-level `clock`/`reset` alongside protocol
+    # bundle clocks. Prefer the actual design clock/reset when present; the
+    # bundle aliases may be unused wires.
+    names = {p.name for p in signature.ports}
+    if "ACLK" in mapping and "clock" in names:
+        mapping["ACLK"] = "clock"
     missing = [signal for signal in rules["required"] if not mapping[signal]]
     mapped_set = set(mapping.values())
     interrupts = _detect_interrupts(signature)

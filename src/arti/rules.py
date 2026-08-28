@@ -27,6 +27,7 @@ PROTOCOL_RULES = {
             "RDATA", "RRESP", "RVALID", "RREADY", "AWLEN", "AWSIZE",
             "AWBURST", "WLAST", "ARLEN", "ARSIZE", "ARBURST", "RLAST",
         ],
+        "optional": ["WSTRB", "AWPROT", "ARPROT"],
         "clock": ["ACLK"], "reset": ["ARESETN"],
     },
     "axi-lite": {
