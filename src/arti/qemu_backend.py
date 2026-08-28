@@ -289,9 +289,15 @@ echo "=== Building embedded RTL model for {mod} ({protocol}) ==="
 mkdir -p "$SCRIPT_DIR/verilated"
 
 # 1. Generate Verilated C++ sources
+shopt -s nullglob
+RTL_SOURCES=("$SCRIPT_DIR"/../rtl/*.v "$SCRIPT_DIR"/../rtl/*.sv)
+if (( ${{#RTL_SOURCES[@]}} == 0 )); then
+    echo "no Verilog/SystemVerilog sources found under $SCRIPT_DIR/../rtl" >&2
+    exit 1
+fi
 verilator --cc --Mdir "$SCRIPT_DIR/verilated" \
   --CFLAGS "-Wno-undefined-bool-conversion" \
-  "$SCRIPT_DIR/../rtl/{mod}.v" --top-module "$TOP_MODULE"
+  "${{RTL_SOURCES[@]}}" --top-module "$TOP_MODULE"
 
 # 2. Compile all sources into a static library
 cd "$SCRIPT_DIR/verilated"
