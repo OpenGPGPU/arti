@@ -341,13 +341,26 @@ def render_axi4_model(config, signature, mapping, port_by_name, interrupts):
     rlast = mapping["RLAST"]
     wstrb = mapping.get("WSTRB", "")
 
+    # Keep unbridged client request channels quiescent but ready. This avoids
+    # an accidental X/0 ready input stalling the RTL before a future guest-
+    # memory callback bridge is installed.
+    mapped_ports = set(mapping.values())
+    client_defaults = []
+    for port in signature.ports:
+        if port.name in mapped_ports or port.direction != "input":
+            continue
+        canon = port.name.upper()
+        if canon.endswith("_READY") or canon.endswith("READY"):
+            client_defaults.append("    g_rtl->{} = 1;".format(port.name))
+        elif any(token in canon for token in ("_VALID", "VALID", "_FAULT", "FAULT")):
+            client_defaults.append("    g_rtl->{} = 0;".format(port.name))
     idle_body = "\n".join([
         "    g_rtl->{} = 0;".format(awvalid),
         "    g_rtl->{} = 0;".format(wvalid),
         "    g_rtl->{} = 0;".format(bready),
         "    g_rtl->{} = 0;".format(arvalid),
         "    g_rtl->{} = 0;".format(rready),
-    ])
+    ] + client_defaults)
 
     lines = [_preamble(mod, clk, rst)]
     lines.append("")
