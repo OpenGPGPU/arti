@@ -507,7 +507,8 @@ PY
         fail "arti-rtl meson integration missing"
     grep -q "create_arti_rtl" "$qemu_src/hw/arm/virt.c" || \
         fail "arti-rtl virt integration missing"
-    if grep -q "GraphicHwOps" "$qemu_src/hw/misc/arti-rtl.c"; then
+    if grep -q "GraphicHwOps" "$qemu_src/hw/misc/arti-rtl.c" && \
+       ! grep -q "ARTI_SCANOUT_ADDR_REG" "$qemu_src/hw/misc/arti-rtl.c"; then
         grep -q "/framebuffer@" "$qemu_src/hw/arm/virt.c" || \
         fail "arti-rtl framebuffer DT integration missing"
     fi
@@ -738,7 +739,19 @@ display:
 YAMLEOF
 
 CONFIG_STAMP="$GEN_DIR/generated/.config.stamp"
-CONFIG_SIGNATURE="$($ARTI_PYTHON -c 'import hashlib, pathlib, sys; h = hashlib.sha256(); [h.update(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]; print(h.hexdigest())' "$GEN_DIR/config.yaml" "$ARTI_RTL_SOURCE")"
+CONFIG_SIGNATURE="$($ARTI_PYTHON - "$GEN_DIR/config.yaml" "$ARTI_RTL_SOURCE_LIST" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+h = hashlib.sha256()
+h.update(pathlib.Path(sys.argv[1]).read_bytes())
+for raw_path in sys.argv[2].split(","):
+    path = pathlib.Path(raw_path.strip().strip("'\""))
+    h.update(path.read_bytes())
+print(h.hexdigest())
+PY
+)"
 
 EXPECT_DISPLAY=0
 if [ "${ARTI_DISPLAY:-0}" = "1" ] || [ "${ARTI_DISPLAY:-0}" = "true" ]; then
