@@ -121,6 +121,28 @@ class FrameworkTest(unittest.TestCase):
             self.assertIn("qemu_console_update_full", stub)
             self.assertIn("memcpy(s->vram", stub)
 
+    def test_generate_guest_memory_scanout_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.yaml"
+            config.write_text(
+                "rtl:\n  top_module: simple_gpio\n  source_files: [simple_gpio.v]\n"
+                "bridge:\n  mode: qemu-embedded\n  base_address: \"0x0B000000\"\n"
+                "  data_width: 32\n"
+                "display:\n  enabled: true\n  source: guest-memory\n"
+                "  width: 16\n  height: 16\n  format: a8r8g8b8\n"
+                "  address_register: 0x18\n  stride_register: 0x20\n"
+                "  framebuffer_size: 0x400\n"
+            )
+            (Path(tmp) / "simple_gpio.v").write_text(RTL.read_text())
+            output = Path(tmp) / "generated"
+            self.assertEqual(main(["generate", str(config), "--output", str(output)]), 0)
+            stub = (output / "qemu/arti-rtl.c").read_text()
+            self.assertIn("ARTI_SCANOUT_ADDR_REG 0x18u", stub)
+            self.assertIn("ARTI_SCANOUT_STRIDE_REG 0x20u", stub)
+            self.assertIn("s->scanout_addr", stub)
+            self.assertIn("address_space_read(&address_space_memory", stub)
+            self.assertNotIn("s->vram", stub)
+
 
     @unittest.skipUnless(shutil.which("verilator") and shutil.which("pkg-config"),
                          "Verilator/SystemC build dependencies are unavailable")

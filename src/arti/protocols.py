@@ -750,6 +750,8 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     has_irq = bool(interrupts)
     irq_count = len(interrupts)
     has_display = bool(config and config.display_enabled)
+    has_guest_scanout = bool(has_display and config.display_source == "guest-memory")
+    has_mmio_vram = bool(has_display and not has_guest_scanout)
 
     lines = []
     lines.append("/* arti-qemu-stub-v4 */")
@@ -779,9 +781,13 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    QEMUTimer *irq_timer;")
         lines.append("    int irq_prev[{}];".format(irq_count))
     if has_display:
-        lines.append("    uint8_t *vram;")
         lines.append("    QemuConsole *con;")
         lines.append("    bool invalidate;")
+    if has_mmio_vram:
+        lines.append("    uint8_t *vram;")
+    if has_guest_scanout:
+        lines.append("    uint64_t scanout_addr;")
+        lines.append("    uint32_t scanout_stride;")
     lines.append("};")
     lines.append("")
 
@@ -838,7 +844,11 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("#define ARTI_FB_BPP 32u")
         lines.append("#define ARTI_FB_STRIDE (ARTI_FB_WIDTH * 4u)")
         lines.append("#define ARTI_FB_SIZE 0x{:x}u".format(config.display_framebuffer_size))
-        lines.append("#define ARTI_MMIO_EXTENT (ARTI_FB_OFFSET + ARTI_FB_SIZE)")
+        if has_mmio_vram:
+            lines.append("#define ARTI_MMIO_EXTENT (ARTI_FB_OFFSET + ARTI_FB_SIZE)")
+        if has_guest_scanout:
+            lines.append("#define ARTI_SCANOUT_ADDR_REG 0x{:x}u".format(config.display_address_register))
+            lines.append("#define ARTI_SCANOUT_STRIDE_REG 0x{:x}u".format(config.display_stride_register))
         lines.append("")
         lines.append("static void arti_gfx_invalidate(void *opaque)")
         lines.append("{")
@@ -857,10 +867,23 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("        qemu_console_resize(s->con, ARTI_FB_WIDTH, ARTI_FB_HEIGHT);")
         lines.append("        surface = qemu_console_surface(s->con);")
         lines.append("    }")
-        lines.append("    for (y = 0; y < ARTI_FB_HEIGHT; y++) {")
-        lines.append("        memcpy(surface_data(surface) + y * surface_stride(surface),")
-        lines.append("               s->vram + y * ARTI_FB_STRIDE, ARTI_FB_STRIDE);")
-        lines.append("    }")
+        if has_guest_scanout:
+            lines.append("    if (!s->scanout_addr) return false;")
+            lines.append("    uint32_t *dst;")
+            lines.append("    uint32_t src[ARTI_FB_WIDTH];")
+            lines.append("    unsigned stride = s->scanout_stride ? s->scanout_stride : ARTI_FB_STRIDE;")
+            lines.append("    for (y = 0; y < ARTI_FB_HEIGHT; y++) {")
+            lines.append("        if (address_space_read(&address_space_memory, s->scanout_addr + y * stride,")
+            lines.append("                               MEMTXATTRS_UNSPECIFIED, src, ARTI_FB_STRIDE) != MEMTX_OK)")
+            lines.append("            return false;")
+            lines.append("        dst = (uint32_t *)(surface_data(surface) + y * surface_stride(surface));")
+            lines.append("        for (unsigned x = 0; x < ARTI_FB_WIDTH; x++) dst[x] = src[x] >> 8;")
+            lines.append("    }")
+        else:
+            lines.append("    for (y = 0; y < ARTI_FB_HEIGHT; y++) {")
+            lines.append("        memcpy(surface_data(surface) + y * surface_stride(surface),")
+            lines.append("               s->vram + y * ARTI_FB_STRIDE, ARTI_FB_STRIDE);")
+            lines.append("    }")
         lines.append("    qemu_console_update_full(s->con);")
         lines.append("    s->invalidate = false;")
         lines.append("    return true;")
@@ -877,7 +900,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     if has_display or has_irq:
         lines.append("    ArtiRtlState *s = opaque;")
     lines.append("    uint64_t data = 0;")
-    if has_display:
+    if has_mmio_vram:
         lines.append("    if (offset >= ARTI_FB_OFFSET &&")
         lines.append("        offset + size <= ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
         lines.append("        memcpy(&data, s->vram + (offset - ARTI_FB_OFFSET), size);")
@@ -896,13 +919,22 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("{")
     if has_display:
         lines.append("    ArtiRtlState *s = opaque;")
+    if has_mmio_vram:
         lines.append("    if (offset >= ARTI_FB_OFFSET &&")
         lines.append("        offset + size <= ARTI_FB_OFFSET + ARTI_FB_SIZE) {")
         lines.append("        memcpy(s->vram + (offset - ARTI_FB_OFFSET), &value, size);")
         lines.append("        s->invalidate = true;")
         lines.append("        return;")
         lines.append("    }")
-    elif has_irq:
+    if has_guest_scanout:
+        lines.append("    if (offset == ARTI_SCANOUT_ADDR_REG && size == 4) {")
+        lines.append("        s->scanout_addr = (uint32_t)value;")
+        lines.append("        s->invalidate = true;")
+        lines.append("    } else if (offset == ARTI_SCANOUT_STRIDE_REG && size == 4) {")
+        lines.append("        s->scanout_stride = (uint32_t)value;")
+        lines.append("        s->invalidate = true;")
+        lines.append("    }")
+    elif has_irq and not has_display:
         lines.append("    ArtiRtlState *s = opaque;")
     lines.append("    arti_rtl_model_write(offset, value, size);")
     if has_irq:
@@ -918,10 +950,13 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("    ArtiRtlState *s = ARTI_RTL(dev);")
     lines.append("    arti_rtl_model_init();")
     lines.append("    arti_rtl_model_set_memory_callbacks(arti_guest_read, arti_guest_write);")
-    if has_display:
+    if has_mmio_vram:
         lines.append("    s->vram = g_malloc0(ARTI_FB_SIZE);")
+    if has_guest_scanout:
+        lines.append("    s->scanout_addr = 0;")
+        lines.append("    s->scanout_stride = ARTI_FB_STRIDE;")
     lines.append("    memory_region_init_io(&s->mmio, OBJECT(s), &arti_ops, s,")
-    if has_display:
+    if has_mmio_vram:
         lines.append("                          TYPE_ARTI_RTL, ARTI_MMIO_EXTENT);")
     else:
         lines.append("                          TYPE_ARTI_RTL, ARTI_MMIO_SIZE);")
@@ -936,7 +971,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     if has_display:
         lines.append("    s->con = qemu_graphic_console_create(dev, 0, &arti_gfx_ops, s);")
     lines.append("}")
-    if has_display:
+    if has_mmio_vram:
         lines.append("static void arti_unrealize(DeviceState *dev)")
         lines.append("{")
         lines.append("    ArtiRtlState *s = ARTI_RTL(dev);")
@@ -946,7 +981,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("{")
     lines.append("    DeviceClass *dc = DEVICE_CLASS(klass);")
     lines.append("    dc->realize = arti_realize;")
-    if has_display:
+    if has_mmio_vram:
         lines.append("    dc->unrealize = arti_unrealize;")
     lines.append("}")
     lines.append("static const TypeInfo arti_info = {")

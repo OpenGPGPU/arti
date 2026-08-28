@@ -271,6 +271,32 @@ display:
   framebuffer_size: 0x800000
 ```
 
+For a GPU that renders into driver-allocated guest RAM, select the dynamic
+scanout source instead of the fixed MMIO VRAM aperture. ARTI watches the GPU's
+framebuffer-address and stride registers, then reads that guest physical memory
+into the QEMU display surface:
+
+```yaml
+display:
+  enabled: true
+  source: guest-memory
+  width: 16
+  height: 16
+  format: a8r8g8b8
+  address_register: 0x18
+  stride_register: 0x20
+  framebuffer_size: 0x400
+```
+
+This mode does not create a `simple-framebuffer` DT node because the scanout
+buffer is allocated dynamically by the bound GPU driver. To render the driver
+self-test and keep a QEMU window open for visual inspection:
+
+```bash
+INTEGRATION_CONFIG=/path/to/gpu_integration.yaml \
+  ./examples/linux_arti_driver/run_gpu_display.sh
+```
+
 The reference GPU example uses this reset-time ABI:
 
 - MMIO control base: `0x0B000000`
@@ -319,8 +345,9 @@ iverilog -g2012 -s arti_gpu_tb -o /tmp/arti_gpu_tb.vvp \
 vvp /tmp/arti_gpu_tb.vvp
 ```
 
-The `test` and `interactive` modes of `run.sh` always run with `-display none` and exit
-after the test or shell session, so `ARTI_DISPLAY` alone does not open a graphics window.
+The test harness defaults to `-display none`; set `QEMU_DISPLAY=cocoa` (macOS)
+or another compiled QEMU display backend to open a graphics window. Use
+`HOLD_AFTER_TEST` to control how long the rendered frame remains visible.
 The default Linux test only loads `arti_rtl_test.ko`. Enable the reference modules
 explicitly with `GPU_REFERENCE=1`; setup then selects `examples/arti_gpu/arti_gpu.v`,
 defaults the DT compatible list to `arti,rtl-gpu;arti,rtl`, and skips the generic smoke

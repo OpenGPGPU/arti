@@ -32,6 +32,8 @@ DRIVER_DEPS="${DRIVER_DEPS:-}"
 DRIVER_MANIFEST="${DRIVER_MANIFEST:-}"
 DRIVER_MARKER="${DRIVER_MARKER:-ARTI EXTERNAL DRIVER PASS}"
 ARTI_DISPLAY="${ARTI_DISPLAY:-0}"
+QEMU_DISPLAY="${QEMU_DISPLAY:-none}"
+HOLD_AFTER_TEST="${HOLD_AFTER_TEST:-1}"
 
 if [ "$GPU_DRM_TEST" = "1" ] && [ "$GPU_REFERENCE" != "1" ]; then
     echo "FAIL: GPU_DRM_TEST=1 requires GPU_REFERENCE=1"
@@ -137,7 +139,7 @@ rm -f "$WORK/arti_rtl_test.ko" "$WORK/arti_driver.ko" "$WORK/arti_gpu_probe.ko" 
       "$WORK/arti_gpu_drm.ko" "$WORK/backlight.ko" "$WORK/drm.ko" \
       "$WORK/drm_kms_helper.ko" "$WORK/drm_client_lib.ko" \
       "$WORK/drm_shmem_helper.ko"
-"$CROSS_GCC" -static -O2 \
+"$CROSS_GCC" -static -O2 -DARTI_TEST_HOLD_SECONDS="$HOLD_AFTER_TEST" \
     -o "$WORK/init" "$SCRIPT_DIR/arti-linux-init.c"
 chmod +x "$WORK/init"
 if [ "$SKIP_GENERIC_TEST" != "1" ]; then
@@ -201,7 +203,7 @@ set +e
 "$TIMEOUT_BIN" "$TIMEOUT" "$QEMU" \
     -machine virt -cpu cortex-a53 -m 512M \
     ${QEMU_FW_DIR:+-L "$QEMU_FW_DIR"} \
-    -display none -monitor none \
+    -display "$QEMU_DISPLAY" -monitor none \
     -serial file:"$SERIAL_LOG" \
     -kernel "$KERNEL" \
     -initrd "$WORK/initramfs.cpio.gz" \
@@ -224,6 +226,7 @@ if [ -n "$DRIVER_KO" ] && grep -qF "$DRIVER_MARKER" "$SERIAL_LOG" 2>/dev/null; t
 fi
 if [ "$GENERIC_PASS" = "1" ] || [ "$REFERENCE_PASS" = "1" ] || [ "$EXTERNAL_PASS" = "1" ]; then
     if { [ "$ARTI_DISPLAY" = "1" ] || [ "$ARTI_DISPLAY" = "true" ]; } && \
+       [ "${ARTI_DISPLAY_SOURCE:-mmio-vram}" != "guest-memory" ] && \
        ! grep -q "simplefb registered" "$SERIAL_LOG" 2>/dev/null; then
         echo "=== SIMPLEFB TEST FAILED ==="
         echo "--- simplefb registration marker not found ---"

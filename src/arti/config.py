@@ -24,8 +24,11 @@ class Config:
     display_width: int = 1024
     display_height: int = 768
     display_format: str = "a8r8g8b8"
+    display_source: str = "mmio-vram"
     display_framebuffer_offset: int = 0x100000
     display_framebuffer_size: int = 0x800000
+    display_address_register: int = 0x18
+    display_stride_register: int = 0x20
 
 
 def load_config(path: str | Path) -> Config:
@@ -61,6 +64,9 @@ def load_config(path: str | Path) -> Config:
         display_width=int(display_scalar("width", "1024")),
         display_height=int(display_scalar("height", "768")),
         display_format=display_scalar("format", "a8r8g8b8"),
+        display_source=display_scalar("source", "mmio-vram"),
         display_framebuffer_offset=int(display_scalar("framebuffer_offset", "0x100000").replace("_", ""), 0),
         display_framebuffer_size=int(display_scalar("framebuffer_size", "0x800000").replace("_", ""), 0),
+        display_address_register=int(display_scalar("address_register", "0x18").replace("_", ""), 0),
+        display_stride_register=int(display_scalar("stride_register", "0x20").replace("_", ""), 0),
     )

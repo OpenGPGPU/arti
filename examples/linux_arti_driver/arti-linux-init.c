@@ -16,6 +16,10 @@
 #define __NR_finit_module 413
 #endif
 
+#ifndef ARTI_TEST_HOLD_SECONDS
+#define ARTI_TEST_HOLD_SECONDS 1
+#endif
+
 static int putstr(const char *s) {
     return write(1, s, strlen(s));
 }
@@ -118,7 +122,7 @@ int main(void) {
 
     /* Give the kernel time to flush probe messages to console */
     sync();
-    sleep(1);
+    sleep(ARTI_TEST_HOLD_SECONDS);
     sync();
 
     putstr("ARTI Linux init: done, powering off\r\n");
