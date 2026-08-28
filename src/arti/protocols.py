@@ -24,6 +24,9 @@ def _common_header(irq_count):
         "void arti_rtl_model_init(void);\n"
         "int arti_rtl_model_write(uint64_t addr, uint64_t data, unsigned size);\n"
         "int arti_rtl_model_read(uint64_t addr, uint64_t *data, unsigned size);\n"
+        "typedef int (*arti_mem_read_cb)(uint64_t addr, uint8_t *data, unsigned size, uint64_t transaction_id);\n"
+        "typedef int (*arti_mem_write_cb)(uint64_t addr, const uint8_t *data, unsigned size, uint64_t byte_mask, uint64_t transaction_id);\n"
+        "void arti_rtl_model_set_memory_callbacks(arti_mem_read_cb read_cb, arti_mem_write_cb write_cb);\n"
         + irq_decl +
         "#ifdef __cplusplus\n"
         "}\n"
@@ -60,7 +63,14 @@ def _preamble(mod, clk, rst):
     lines.append("")
     lines.append("static VerilatedContext *g_ctx = nullptr;")
     lines.append("static V{} *g_rtl = nullptr;".format(mod))
+    lines.append("static arti_mem_read_cb g_mem_read_cb = nullptr;")
+    lines.append("static arti_mem_write_cb g_mem_write_cb = nullptr;")
     lines.append("")
+    lines.append("extern \"C\" void arti_rtl_model_set_memory_callbacks(arti_mem_read_cb read_cb, arti_mem_write_cb write_cb)")
+    lines.append("{")
+    lines.append("    g_mem_read_cb = read_cb;")
+    lines.append("    g_mem_write_cb = write_cb;")
+    lines.append("}")
     lines.append("static void tick(void)")
     lines.append("{")
     lines.append("    g_rtl->{} = 0;".format(clk))
