@@ -19,6 +19,7 @@ ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
 QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
+QEMU_FW_DIR="${QEMU_FW_DIR:-/tmp/qemu-src/qemu-11.1.0/pc-bios}"
 KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
 LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
 WORK="${WORK:-/tmp/arti-linux-test}"
@@ -199,6 +200,7 @@ rm -f "$SERIAL_LOG"
 set +e
 "$TIMEOUT_BIN" "$TIMEOUT" "$QEMU" \
     -machine virt -cpu cortex-a53 -m 512M \
+    ${QEMU_FW_DIR:+-L "$QEMU_FW_DIR"} \
     -display none -monitor none \
     -serial file:"$SERIAL_LOG" \
     -kernel "$KERNEL" \
