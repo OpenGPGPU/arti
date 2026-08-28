@@ -20,6 +20,8 @@ from arti.inference import infer_protocol
 from arti.integration import load_integration
 from arti.mcp import _response
 from arti.parser import parse_verilog
+from arti.model import ModuleSignature, Port
+from arti.protocols import _memory_bridge_for_axi4
 
 
 ROOT = Path(__file__).parents[1]
@@ -617,6 +619,33 @@ class MultiProtocolTest(unittest.TestCase):
             self.assertIn("awlen", wrapper.lower())
             self.assertIn("wlast", wrapper.lower())
             self.assertIn("arlen", wrapper.lower())
+            stub = (output / "qemu/arti-rtl.c").read_text()
+            self.assertIn("address_space_read(&address_space_memory", stub)
+            self.assertIn("address_space_write(&address_space_memory", stub)
+            self.assertIn("arti_rtl_model_set_memory_callbacks", stub)
+
+    def test_axi4_memory_clients_share_guest_callback_bridge(self):
+        ports = []
+        for prefix in ("io_cbMem", "io_fbMem"):
+            ports.extend([
+                Port(f"{prefix}_req_ready", "input"),
+                Port(f"{prefix}_req_valid", "output"),
+                Port(f"{prefix}_req_bits_write", "output"),
+                Port(f"{prefix}_req_bits_addr", "output", 32),
+                Port(f"{prefix}_req_bits_data", "output", 32),
+                Port(f"{prefix}_resp_ready", "output"),
+                Port(f"{prefix}_resp_valid", "input"),
+                Port(f"{prefix}_resp_bits_data", "input", 32),
+                Port(f"{prefix}_resp_bits_write", "input"),
+            ])
+        globals_, drive, capture = _memory_bridge_for_axi4(
+            ModuleSignature("gpu", ports)
+        )
+        self.assertIn("g_cbMem_pending", globals_)
+        self.assertIn("g_fbMem_pending", globals_)
+        self.assertIn("io_cbMem_req_ready", drive)
+        self.assertIn("g_mem_read_cb(addr, bytes, 4, 0)", capture)
+        self.assertIn("g_mem_write_cb(addr, bytes, 4, 0xf, 0)", capture)
 
     def test_non_axilite_protocol_in_local_mode(self):
         """Non-AXI-Lite protocols should generate a generic bridge in local mode."""

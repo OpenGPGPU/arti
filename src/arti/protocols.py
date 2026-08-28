@@ -53,18 +53,127 @@ def _irq_check_func(interrupts):
     return "\n".join(lines) + "\n"
 
 
-def _preamble(mod, clk, rst):
+def _memory_bridge_for_axi4(signature):
+    """Render adapters from common Decoupled memory clients to one callback ABI."""
+    names = {p.name for p in signature.ports}
+    word_channels = []
+    for prefix in ("io_cbMem", "io_fbMem", "io_texMem"):
+        required = {
+            f"{prefix}_req_ready", f"{prefix}_req_valid",
+            f"{prefix}_req_bits_write", f"{prefix}_req_bits_addr",
+            f"{prefix}_req_bits_data", f"{prefix}_resp_ready",
+            f"{prefix}_resp_valid", f"{prefix}_resp_bits_data",
+            f"{prefix}_resp_bits_write",
+        }
+        if required <= names:
+            word_channels.append(prefix)
+
+    line_channels = []
+    for stem in ("io_kernelMem", "io_kernelWordMem"):
+        req = stem + "Req"
+        resp = stem + "Resp"
+        required = {
+            f"{req}_ready", f"{req}_valid", f"{req}_bits_address",
+            f"{req}_bits_writeData", f"{req}_bits_byteMask",
+            f"{req}_bits_isWrite", f"{req}_bits_sizeLog2",
+            f"{req}_bits_transactionId", f"{resp}_ready",
+            f"{resp}_valid", f"{resp}_bits_readData",
+            f"{resp}_bits_fault", f"{resp}_bits_transactionId",
+        }
+        if required <= names:
+            line_channels.append((req, resp))
+
+    if not word_channels and not line_channels:
+        return "", "", ""
+
+    globals_ = [
+        "struct ArtiWordPending { bool valid; uint32_t data; bool write; };",
+        "struct ArtiLinePending { bool valid; uint32_t data[16]; uint8_t fault; uint8_t id; };",
+    ]
+    drive = []
+    capture = []
+    for prefix in word_channels:
+        ident = prefix.removeprefix("io_")
+        globals_.append(f"static ArtiWordPending g_{ident}_pending = {{false, 0, false}};")
+        drive.extend([
+            f"    g_rtl->{prefix}_req_ready = !g_{ident}_pending.valid;",
+            f"    g_rtl->{prefix}_resp_valid = g_{ident}_pending.valid;",
+            f"    g_rtl->{prefix}_resp_bits_data = g_{ident}_pending.data;",
+            f"    g_rtl->{prefix}_resp_bits_write = g_{ident}_pending.write;",
+        ])
+        capture.extend([
+            f"    if (g_{ident}_pending.valid && g_rtl->{prefix}_resp_ready)",
+            f"        g_{ident}_pending.valid = false;",
+            f"    if (!g_{ident}_pending.valid && g_rtl->{prefix}_req_valid && g_rtl->{prefix}_req_ready) {{",
+            "        uint8_t bytes[4] = {0, 0, 0, 0};",
+            f"        uint64_t addr = g_rtl->{prefix}_req_bits_addr;",
+            f"        bool write = g_rtl->{prefix}_req_bits_write;",
+            f"        uint32_t word = g_rtl->{prefix}_req_bits_data;",
+            "        int status = -1;",
+            "        if (write && g_mem_write_cb) {",
+            "            memcpy(bytes, &word, sizeof(word));",
+            "            status = g_mem_write_cb(addr, bytes, 4, 0xf, 0);",
+            "        } else if (!write && g_mem_read_cb) {",
+            "            status = g_mem_read_cb(addr, bytes, 4, 0);",
+            "            memcpy(&word, bytes, sizeof(word));",
+            "        }",
+            f"        g_{ident}_pending.data = word;",
+            f"        g_{ident}_pending.write = write;",
+            f"        g_{ident}_pending.valid = status == 0;",
+            "    }",
+        ])
+
+    for req, resp in line_channels:
+        ident = req.removeprefix("io_")
+        globals_.append(f"static ArtiLinePending g_{ident}_pending = {{false, {{0}}, 0, 0}};")
+        drive.extend([
+            f"    g_rtl->{req}_ready = !g_{ident}_pending.valid;",
+            f"    g_rtl->{resp}_valid = g_{ident}_pending.valid;",
+            f"    for (unsigned i = 0; i < 16; i++) g_rtl->{resp}_bits_readData[i] = g_{ident}_pending.data[i];",
+            f"    g_rtl->{resp}_bits_fault = g_{ident}_pending.fault;",
+            f"    g_rtl->{resp}_bits_transactionId = g_{ident}_pending.id;",
+        ])
+        capture.extend([
+            f"    if (g_{ident}_pending.valid && g_rtl->{resp}_ready)",
+            f"        g_{ident}_pending.valid = false;",
+            f"    if (!g_{ident}_pending.valid && g_rtl->{req}_valid && g_rtl->{req}_ready) {{",
+            "        uint8_t bytes[64] = {0};",
+            f"        uint64_t addr = g_rtl->{req}_bits_address;",
+            f"        unsigned size = 1u << g_rtl->{req}_bits_sizeLog2;",
+            "        if (size > 64) size = 64;",
+            f"        uint64_t id = g_rtl->{req}_bits_transactionId;",
+            f"        bool write = g_rtl->{req}_bits_isWrite;",
+            "        int status = -1;",
+            "        if (write && g_mem_write_cb) {",
+            f"            memcpy(bytes, &g_rtl->{req}_bits_writeData, sizeof(bytes));",
+            f"            status = g_mem_write_cb(addr, bytes, size, g_rtl->{req}_bits_byteMask, id);",
+            "        } else if (!write && g_mem_read_cb) {",
+            "            status = g_mem_read_cb(addr, bytes, size, id);",
+            "        }",
+            f"        memcpy(g_{ident}_pending.data, bytes, sizeof(bytes));",
+            f"        g_{ident}_pending.fault = status != 0;",
+            f"        g_{ident}_pending.id = id;",
+            f"        g_{ident}_pending.valid = true;",
+            "    }",
+        ])
+    return "\n".join(globals_), "\n".join(drive), "\n".join(capture)
+
+
+def _preamble(mod, clk, rst, memory_globals="", memory_drive="", memory_capture=""):
     lines = []
     lines.append("// Auto-generated by arti \u2014 do not edit.")
     lines.append('#include "V{}.h"'.format(mod))
     lines.append('#include "verilated.h"')
     lines.append('#include "arti_rtl_model.h"')
     lines.append("#include <memory>")
+    lines.append("#include <cstring>")
     lines.append("")
     lines.append("static VerilatedContext *g_ctx = nullptr;")
     lines.append("static V{} *g_rtl = nullptr;".format(mod))
     lines.append("static arti_mem_read_cb g_mem_read_cb = nullptr;")
     lines.append("static arti_mem_write_cb g_mem_write_cb = nullptr;")
+    if memory_globals:
+        lines.append(memory_globals)
     lines.append("")
     lines.append("extern \"C\" void arti_rtl_model_set_memory_callbacks(arti_mem_read_cb read_cb, arti_mem_write_cb write_cb)")
     lines.append("{")
@@ -73,8 +182,12 @@ def _preamble(mod, clk, rst):
     lines.append("}")
     lines.append("static void tick(void)")
     lines.append("{")
+    if memory_drive:
+        lines.append(memory_drive)
     lines.append("    g_rtl->{} = 0;".format(clk))
     lines.append("    g_rtl->eval();")
+    if memory_capture:
+        lines.append(memory_capture)
     lines.append("    g_rtl->{} = 1;".format(clk))
     lines.append("    g_rtl->eval();")
     lines.append("}")
@@ -372,7 +485,8 @@ def render_axi4_model(config, signature, mapping, port_by_name, interrupts):
         "    g_rtl->{} = 0;".format(rready),
     ] + client_defaults)
 
-    lines = [_preamble(mod, clk, rst)]
+    memory_globals, memory_drive, memory_capture = _memory_bridge_for_axi4(signature)
+    lines = [_preamble(mod, clk, rst, memory_globals, memory_drive, memory_capture)]
     lines.append("")
     lines.append(_init_func(mod, clk, rst, idle_body))
     lines.append("")
@@ -644,6 +758,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append('#include "qapi/error.h"')
     lines.append('#include "qemu/module.h"')
     lines.append('#include "arti_rtl_model.h"')
+    lines.append('#include "system/address-spaces.h"')
     if has_display:
         lines.append('#include "ui/console.h"')
 
@@ -668,6 +783,31 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    QemuConsole *con;")
         lines.append("    bool invalidate;")
     lines.append("};")
+    lines.append("")
+
+    lines.append("static int arti_guest_read(uint64_t addr, uint8_t *data,")
+    lines.append("                           unsigned size, uint64_t transaction_id)")
+    lines.append("{")
+    lines.append("    (void)transaction_id;")
+    lines.append("    if (!size || size > 64) return -1;")
+    lines.append("    return address_space_read(&address_space_memory, addr,")
+    lines.append("                              MEMTXATTRS_UNSPECIFIED, data, size) == MEMTX_OK ? 0 : -1;")
+    lines.append("}")
+    lines.append("")
+    lines.append("static int arti_guest_write(uint64_t addr, const uint8_t *data,")
+    lines.append("                            unsigned size, uint64_t byte_mask,")
+    lines.append("                            uint64_t transaction_id)")
+    lines.append("{")
+    lines.append("    (void)transaction_id;")
+    lines.append("    if (!size || size > 64) return -1;")
+    lines.append("    for (unsigned i = 0; i < size; i++) {")
+    lines.append("        if (!(byte_mask & (UINT64_C(1) << i))) continue;")
+    lines.append("        if (address_space_write(&address_space_memory, addr + i,")
+    lines.append("                                MEMTXATTRS_UNSPECIFIED, data + i, 1) != MEMTX_OK)")
+    lines.append("            return -1;")
+    lines.append("    }")
+    lines.append("    return 0;")
+    lines.append("}")
     lines.append("")
 
     if has_irq:
@@ -777,6 +917,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("{")
     lines.append("    ArtiRtlState *s = ARTI_RTL(dev);")
     lines.append("    arti_rtl_model_init();")
+    lines.append("    arti_rtl_model_set_memory_callbacks(arti_guest_read, arti_guest_write);")
     if has_display:
         lines.append("    s->vram = g_malloc0(ARTI_FB_SIZE);")
     lines.append("    memory_region_init_io(&s->mmio, OBJECT(s), &arti_ops, s,")
