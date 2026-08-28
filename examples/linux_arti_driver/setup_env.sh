@@ -763,7 +763,8 @@ else
 import sys; sys.path.insert(0, '$ARTI_DIR/src')
 from arti.cli import main
 main(['generate', '$GEN_DIR/config.yaml', '--output', '$GEN_DIR/generated'])
-" || fail "Failed to generate embedded model"
+    " || fail "Failed to generate embedded model"
+    mkdir -p "$(dirname "$CONFIG_STAMP")"
     printf '%s\n' "$CONFIG_SIGNATURE" > "$CONFIG_STAMP"
 fi
 
@@ -803,7 +804,9 @@ else
 fi
 
 # 2e. Configure and build QEMU
-if [ -f "$QEMU_BUILD/qemu-system-aarch64" ] && \
+if [ "${SKIP_QEMU_REBUILD:-0}" = "1" ] && [ -f "$QEMU_BUILD/qemu-system-aarch64" ]; then
+    info "Skipping QEMU rebuild (SKIP_QEMU_REBUILD=1)"
+elif [ -f "$QEMU_BUILD/qemu-system-aarch64" ] && \
    [ ! "$QEMU_SRC/hw/misc/arti-rtl.c" -nt "$QEMU_BUILD/qemu-system-aarch64" ]; then
     info "QEMU already built at $QEMU_BUILD/qemu-system-aarch64"
 else
@@ -912,7 +915,10 @@ else
     fi
     cd "$BUSYBOX_DIR"
     info "Configuring busybox (static)..."
-    make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" defconfig 2>&1 | tail -3
+    # Some BusyBox releases prompt for newly introduced defaults even during
+    # defconfig when a stale .config is present.  Feed empty answers so the
+    # one-click setup remains non-interactive in CI and background jobs.
+    yes "" | make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" defconfig 2>&1 | tail -3
     sedi 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
     make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$BUILD_JOBS" 2>&1 | tail -5
     [ -f "$BUSYBOX_DIR/busybox" ] || fail "Busybox build failed"
