@@ -71,6 +71,8 @@ def infer_protocol(signature: ModuleSignature) -> dict:
     interrupt_names = {irq["name"] for irq in interrupts}
     unknown = [p.name for p in signature.ports
                if p.name not in mapped_set and p.name not in interrupt_names]
+    memory_ports = [p for p in unknown
+                    if any(token in _canonical(p) for token in ("MEM", "MEMORY"))]
     return {
         "protocol": protocol,
         "confidence": round(confidence, 3),
@@ -78,5 +80,6 @@ def infer_protocol(signature: ModuleSignature) -> dict:
         "port_mapping": {k: v for k, v in mapping.items() if v},
         "missing_required": missing,
         "unknown_ports": unknown,
+        "memory_ports": memory_ports,
         "interrupts": interrupts,
     }
