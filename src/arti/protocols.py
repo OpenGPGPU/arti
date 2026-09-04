@@ -66,7 +66,9 @@ def _memory_bridge_for_axi4(signature):
             f"{prefix}_resp_bits_write",
         }
         if required <= names:
-            word_channels.append(prefix)
+            # Address-tagged responses: parallel masters (e.g. the output
+            # merger) match completions by request address.
+            word_channels.append((prefix, f"{prefix}_resp_bits_addr" in names))
 
     line_channels = []
     for stem in ("io_kernelMem", "io_kernelWordMem"):
@@ -87,24 +89,36 @@ def _memory_bridge_for_axi4(signature):
         return "", "", ""
 
     globals_ = [
-        "struct ArtiWordPending { bool valid; uint32_t data; bool write; };",
-        "struct ArtiLinePending { bool valid; uint32_t data[16]; uint8_t fault; uint8_t id; };",
+        "struct ArtiWordResp { uint64_t addr; uint32_t data; bool write; };",
+        "struct ArtiLineResp { uint32_t data[16]; uint8_t fault; uint64_t id; };",
+        "static unsigned g_arti_idle;",
+        "static int g_arti_debug = -1;",
+        "static unsigned long long g_arti_memdbg;",
     ]
     drive = []
     capture = []
-    for prefix in word_channels:
+    for prefix, word_tagged in word_channels:
         ident = prefix.removeprefix("io_")
-        globals_.append(f"static ArtiWordPending g_{ident}_pending = {{false, 0, false}};")
-        drive.extend([
-            f"    g_rtl->{prefix}_req_ready = !g_{ident}_pending.valid;",
-            f"    g_rtl->{prefix}_resp_valid = g_{ident}_pending.valid;",
-            f"    g_rtl->{prefix}_resp_bits_data = g_{ident}_pending.data;",
-            f"    g_rtl->{prefix}_resp_bits_write = g_{ident}_pending.write;",
-        ])
+        globals_.append(f"static std::deque<ArtiWordResp> g_{ident}_resp;")
+        # Requests are always accepted and responses queue in order: this
+        # mirrors a one-cycle-latency memory and never back-pressures the
+        # request channel, which some pipelined masters rely on.
+        drive = drive + [
+            f"    g_rtl->{prefix}_req_ready = 1;",
+            f"    g_rtl->{prefix}_resp_valid = !g_{ident}_resp.empty();",
+            f"    if (!g_{ident}_resp.empty()) {{",
+            f"        g_rtl->{prefix}_resp_bits_data = g_{ident}_resp.front().data;",
+            f"        g_rtl->{prefix}_resp_bits_write = g_{ident}_resp.front().write;",
+        ]
+        if word_tagged:
+            drive.append(f"        g_rtl->{prefix}_resp_bits_addr = g_{ident}_resp.front().addr;")
+        drive = drive + [
+            "    }",
+        ]
         capture.extend([
-            f"    if (g_{ident}_pending.valid && g_rtl->{prefix}_resp_ready)",
-            f"        g_{ident}_pending.valid = false;",
-            f"    if (!g_{ident}_pending.valid && g_rtl->{prefix}_req_valid && g_rtl->{prefix}_req_ready) {{",
+            f"    if (!g_{ident}_resp.empty() && g_rtl->{prefix}_resp_ready)",
+            f"        g_{ident}_resp.pop_front();",
+            f"    if (g_rtl->{prefix}_req_valid && g_rtl->{prefix}_req_ready) {{",
             "        uint8_t bytes[4] = {0, 0, 0, 0};",
             f"        uint64_t addr = g_rtl->{prefix}_req_bits_addr;",
             f"        bool write = g_rtl->{prefix}_req_bits_write;",
@@ -117,26 +131,29 @@ def _memory_bridge_for_axi4(signature):
             "            status = g_mem_read_cb(addr, bytes, 4, 0);",
             "            memcpy(&word, bytes, sizeof(word));",
             "        }",
-            f"        g_{ident}_pending.data = word;",
-            f"        g_{ident}_pending.write = write;",
-            f"        g_{ident}_pending.valid = status == 0;",
+            f"        g_arti_idle = 0;",
+            f'        if (g_arti_debug == 1) fprintf(stderr, "[artidbg] {ident} req#%llu %s addr=0x%llx\\n", g_arti_memdbg, write ? "W" : "R", (unsigned long long)addr);',
+            f"        g_arti_memdbg++;",
+            f"        g_{ident}_resp.push_back({{addr, word, write}});",
             "    }",
         ])
 
     for req, resp in line_channels:
         ident = req.removeprefix("io_")
-        globals_.append(f"static ArtiLinePending g_{ident}_pending = {{false, {{0}}, 0, 0}};")
+        globals_.append(f"static std::deque<ArtiLineResp> g_{ident}_resp;")
         drive.extend([
-            f"    g_rtl->{req}_ready = !g_{ident}_pending.valid;",
-            f"    g_rtl->{resp}_valid = g_{ident}_pending.valid;",
-            f"    for (unsigned i = 0; i < 16; i++) g_rtl->{resp}_bits_readData[i] = g_{ident}_pending.data[i];",
-            f"    g_rtl->{resp}_bits_fault = g_{ident}_pending.fault;",
-            f"    g_rtl->{resp}_bits_transactionId = g_{ident}_pending.id;",
+            f"    g_rtl->{req}_ready = 1;",
+            f"    g_rtl->{resp}_valid = !g_{ident}_resp.empty();",
+            f"    if (!g_{ident}_resp.empty()) {{",
+            f"        for (unsigned i = 0; i < 16; i++) g_rtl->{resp}_bits_readData[i] = g_{ident}_resp.front().data[i];",
+            f"        g_rtl->{resp}_bits_fault = g_{ident}_resp.front().fault;",
+            f"        g_rtl->{resp}_bits_transactionId = g_{ident}_resp.front().id;",
+            "    }",
         ])
         capture.extend([
-            f"    if (g_{ident}_pending.valid && g_rtl->{resp}_ready)",
-            f"        g_{ident}_pending.valid = false;",
-            f"    if (!g_{ident}_pending.valid && g_rtl->{req}_valid && g_rtl->{req}_ready) {{",
+            f"    if (!g_{ident}_resp.empty() && g_rtl->{resp}_ready)",
+            f"        g_{ident}_resp.pop_front();",
+            f"    if (g_rtl->{req}_valid && g_rtl->{req}_ready) {{",
             "        uint8_t bytes[64] = {0};",
             f"        uint64_t addr = g_rtl->{req}_bits_address;",
             f"        unsigned size = 1u << g_rtl->{req}_bits_sizeLog2;",
@@ -150,22 +167,26 @@ def _memory_bridge_for_axi4(signature):
             "        } else if (!write && g_mem_read_cb) {",
             "            status = g_mem_read_cb(addr, bytes, size, id);",
             "        }",
-            f"        memcpy(g_{ident}_pending.data, bytes, sizeof(bytes));",
-            f"        g_{ident}_pending.fault = status != 0;",
-            f"        g_{ident}_pending.id = id;",
-            f"        g_{ident}_pending.valid = true;",
+            f"        ArtiLineResp r;",
+            f"        memcpy(r.data, bytes, sizeof(bytes));",
+            f"        r.fault = status != 0;",
+            f"        r.id = id;",
+            f"        g_arti_idle = 0;",
+            f"        g_{ident}_resp.push_back(r);",
             "    }",
         ])
     return "\n".join(globals_), "\n".join(drive), "\n".join(capture)
 
 
-def _preamble(mod, clk, rst, memory_globals="", memory_drive="", memory_capture=""):
+def _preamble(mod, clk, rst, memory_globals="", memory_drive="", memory_capture="", irq_name=""):
     lines = []
     lines.append("// Auto-generated by arti \u2014 do not edit.")
     lines.append('#include "V{}.h"'.format(mod))
     lines.append('#include "verilated.h"')
     lines.append('#include "arti_rtl_model.h"')
     lines.append("#include <memory>")
+    lines.append("#include <cstdio>")
+    lines.append("#include <deque>")
     lines.append("#include <cstring>")
     lines.append("")
     lines.append("static VerilatedContext *g_ctx = nullptr;")
@@ -190,6 +211,36 @@ def _preamble(mod, clk, rst, memory_globals="", memory_drive="", memory_capture=
         lines.append(memory_capture)
     lines.append("    g_rtl->{} = 1;".format(clk))
     lines.append("    g_rtl->eval();")
+    lines.append("    g_arti_idle++;")
+    lines.append("}")
+    lines.append("")
+    lines.append("// Advance the model after each host-driven MMIO transaction. Real RTL")
+    lines.append("// runs continuously at its configured clock while the guest CPU only")
+    lines.append("// pokes registers, so a QEMU model otherwise starves between MMIO")
+    lines.append("// bursts (CFRunLoop-based hosts never service main-loop timers while")
+    lines.append("// the guest runs).")
+    lines.append("#ifndef ARTI_MODEL_MMIO_ADVANCE_CYCLES")
+    lines.append("#define ARTI_MODEL_MMIO_ADVANCE_CYCLES 500000")
+    lines.append("#ifndef ARTI_MODEL_IDLE_GRACE")
+    lines.append("#define ARTI_MODEL_IDLE_GRACE 20000")
+    lines.append("#endif")
+    lines.append("#endif")
+    lines.append("static void arti_model_settle(void)")
+    lines.append("{")
+    lines.append("    if (g_arti_debug < 0)")
+    lines.append("        g_arti_debug = getenv(\"ARTI_MODEL_DEBUG\") ? 1 : 0;")
+    lines.append("    g_arti_idle = 0;")
+    lines.append("    for (unsigned i = 0; i < ARTI_MODEL_MMIO_ADVANCE_CYCLES; i++) {")
+    lines.append("        tick();")
+    if irq_name:
+        lines.append("        if (g_rtl->{})".format(irq_name))
+        lines.append("            break;")
+    lines.append("        if (g_arti_idle > ARTI_MODEL_IDLE_GRACE)")
+    lines.append("            break;")
+    lines.append("    }")
+    lines.append("    if (g_arti_debug)")
+    lines.append("        fprintf(stderr, \"[artidbg] settle end: irq=%u idle=%u\\n\",")
+    lines.append("                (unsigned)g_rtl->%s, g_arti_idle);" % (irq_name or "io_m_irq"))
     lines.append("}")
     return "\n".join(lines)
 
@@ -297,6 +348,7 @@ def render_axi_lite_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    }")
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append("")
@@ -326,6 +378,7 @@ def render_axi_lite_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
     lines.append("    *data = rdata_val;")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append(_irq_check_func(interrupts))
@@ -392,6 +445,7 @@ def render_apb_model(config, signature, mapping, port_by_name, interrupts):
         lines.append("    tick();")
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append("")
@@ -422,6 +476,7 @@ def render_apb_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
     lines.append("    *data = rdata_val;")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append(_irq_check_func(interrupts))
@@ -486,7 +541,9 @@ def render_axi4_model(config, signature, mapping, port_by_name, interrupts):
     ] + client_defaults)
 
     memory_globals, memory_drive, memory_capture = _memory_bridge_for_axi4(signature)
-    lines = [_preamble(mod, clk, rst, memory_globals, memory_drive, memory_capture)]
+    irq_name = interrupts[0]["name"] if interrupts else ""
+    lines = [_preamble(mod, clk, rst, memory_globals, memory_drive,
+                       memory_capture, irq_name)]
     lines.append("")
     lines.append(_init_func(mod, clk, rst, idle_body))
     lines.append("")
@@ -530,6 +587,7 @@ def render_axi4_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    }")
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append("")
@@ -562,6 +620,7 @@ def render_axi4_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
     lines.append("    *data = rdata_val;")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append(_irq_check_func(interrupts))
@@ -621,6 +680,7 @@ def render_ahb_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    }")
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append("")
@@ -646,6 +706,7 @@ def render_ahb_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
     lines.append("    *data = rdata_val;")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append(_irq_check_func(interrupts))
@@ -695,6 +756,7 @@ def render_axi_stream_model(config, signature, mapping, port_by_name, interrupts
     lines.append("    }")
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append("")
@@ -715,6 +777,7 @@ def render_axi_stream_model(config, signature, mapping, port_by_name, interrupts
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
     lines.append("    *data = rdata_val;")
+    lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append(_irq_check_func(interrupts))
@@ -764,6 +827,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     if has_display:
         lines.append('#include "ui/console.h"')
 
+    lines.append('#include "qemu/thread.h"')
     if has_irq:
         lines.append('#include "qemu/timer.h"')
         lines.append('#include "hw/core/irq.h"')
@@ -789,6 +853,11 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    uint64_t scanout_addr;")
         lines.append("    uint32_t scanout_stride;")
     lines.append("};")
+    lines.append("")
+
+    lines.append("/* The model is shared between the vCPU thread (MMIO handlers) and the")
+    lines.append(" * main loop (the IRQ poll timer); Verilated state is not thread-safe. */")
+    lines.append("static QemuMutex arti_model_lock;")
     lines.append("")
 
     lines.append("static int arti_guest_read(uint64_t addr, uint8_t *data,")
@@ -832,7 +901,9 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("static void arti_irq_timer(void *opaque)")
         lines.append("{")
         lines.append("    ArtiRtlState *s = opaque;")
+        lines.append("    qemu_mutex_lock(&arti_model_lock);")
         lines.append("    arti_update_irqs(s);")
+        lines.append("    qemu_mutex_unlock(&arti_model_lock);")
         lines.append("    timer_mod(s->irq_timer, qemu_clock_get_ns(QEMU_CLOCK_HOST) + {});".format(poll_ns))
         lines.append("}")
         lines.append("")
@@ -906,13 +977,16 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("        memcpy(&data, s->vram + (offset - ARTI_FB_OFFSET), size);")
         lines.append("        return data;")
         lines.append("    }")
+    lines.append("    qemu_mutex_lock(&arti_model_lock);")
     lines.append("    if (arti_rtl_model_read(offset, &data, size) != 0) {")
     if has_irq:
         lines.append("        arti_update_irqs(s);")
+    lines.append("        qemu_mutex_unlock(&arti_model_lock);")
     lines.append("        return 0;")
     lines.append("    }")
     if has_irq:
         lines.append("    arti_update_irqs(s);")
+    lines.append("    qemu_mutex_unlock(&arti_model_lock);")
     lines.append("    return data;")
     lines.append("}")
     lines.append("static void arti_write(void *opaque, hwaddr offset, uint64_t value, unsigned size)")
@@ -936,9 +1010,11 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    }")
     elif has_irq and not has_display:
         lines.append("    ArtiRtlState *s = opaque;")
+    lines.append("    qemu_mutex_lock(&arti_model_lock);")
     lines.append("    arti_rtl_model_write(offset, value, size);")
     if has_irq:
         lines.append("    arti_update_irqs(s);")
+    lines.append("    qemu_mutex_unlock(&arti_model_lock);")
     lines.append("}")
     lines.append("static const MemoryRegionOps arti_ops = {")
     lines.append("    .read = arti_read, .write = arti_write,")
@@ -948,6 +1024,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("static void arti_realize(DeviceState *dev, Error **errp)")
     lines.append("{")
     lines.append("    ArtiRtlState *s = ARTI_RTL(dev);")
+    lines.append("    qemu_mutex_init(&arti_model_lock);")
     lines.append("    arti_rtl_model_init();")
     lines.append("    arti_rtl_model_set_memory_callbacks(arti_guest_read, arti_guest_write);")
     if has_mmio_vram:

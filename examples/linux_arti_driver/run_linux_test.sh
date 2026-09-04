@@ -19,7 +19,17 @@ ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
 QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
-QEMU_FW_DIR="${QEMU_FW_DIR:-/tmp/qemu-src/qemu-11.1.0/pc-bios}"
+QEMU_FW_DIR="${QEMU_FW_DIR:-}"
+if [ -z "$QEMU_FW_DIR" ]; then
+    for fw_candidate in "${QEMU_SRC:+$QEMU_SRC/pc-bios}" \
+                        /tmp/qemu-src/qemu-11.1.0/pc-bios \
+                        /tmp/qemu-11.1.0/pc-bios; do
+        if [ -n "$fw_candidate" ] && [ -f "$fw_candidate/efi-virtio.rom" ]; then
+            QEMU_FW_DIR="$fw_candidate"
+            break
+        fi
+    done
+fi
 KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
 LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
 WORK="${WORK:-/tmp/arti-linux-test}"

@@ -310,9 +310,13 @@ g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I. -I"$VERILATOR_INC" -c "$SCRIPT_DIR/arti_
 ar rcs libarti_rtl_model.a *.o
 ls -lh libarti_rtl_model.a
 
-# 3. Install into QEMU source tree
-cp libarti_rtl_model.a "$QEMU_SRC/hw/misc/"
-cp "$SCRIPT_DIR/arti_rtl_model.h" "$QEMU_SRC/hw/misc/"
+# 3. Install into QEMU source tree. Only refresh files whose content actually
+# changed so an unchanged model does not bump mtimes and force QEMU relinks;
+# ninja still relinks whenever the archive bytes differ.
+cmp -s libarti_rtl_model.a "$QEMU_SRC/hw/misc/libarti_rtl_model.a" || \
+    cp libarti_rtl_model.a "$QEMU_SRC/hw/misc/"
+cmp -s "$SCRIPT_DIR/arti_rtl_model.h" "$QEMU_SRC/hw/misc/arti_rtl_model.h" || \
+    cp "$SCRIPT_DIR/arti_rtl_model.h" "$QEMU_SRC/hw/misc/"
 
 # 4. Rebuild QEMU
 echo "=== Rebuilding QEMU ==="

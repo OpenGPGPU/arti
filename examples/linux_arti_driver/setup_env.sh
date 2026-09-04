@@ -29,10 +29,12 @@ ARTI_DT_COMPAT_FROM_ENV="${ARTI_DT_COMPAT+x}"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 WORK_DIR="${WORK_DIR:-/tmp}"
 QEMU_SRC="${QEMU_SRC:-}"
-# Auto-detect existing QEMU source
-for d in "$ARTI_DIR/../qemu" "$WORK_DIR/qemu-src"; do
-    if [ -f "$d/configure" ]; then QEMU_SRC="$d"; break; fi
-done
+# Auto-detect existing QEMU source (env override wins when already set)
+if [ -z "$QEMU_SRC" ]; then
+    for d in "$ARTI_DIR/../qemu" "$WORK_DIR/qemu-src"; do
+        if [ -f "$d/configure" ]; then QEMU_SRC="$d"; break; fi
+    done
+fi
 QEMU_SRC="${QEMU_SRC:-$WORK_DIR/qemu-src}"
 QEMU_BUILD="${QEMU_BUILD:-}"
 [ -f "$WORK_DIR/qemu-arti-build/qemu-system-aarch64" ] && QEMU_BUILD="${QEMU_BUILD:-$WORK_DIR/qemu-arti-build}"
@@ -41,10 +43,12 @@ QEMU_TOOLS="${QEMU_TOOLS:-}"
 [ -f "$WORK_DIR/qemu-build-tools/bin/ninja" ] && QEMU_TOOLS="${QEMU_TOOLS:-$WORK_DIR/qemu-build-tools}"
 QEMU_TOOLS="${QEMU_TOOLS:-$WORK_DIR/qemu-build-tools}"
 LINUX_SRC="${LINUX_SRC:-}"
-# Auto-detect existing Linux source
-for d in "$ARTI_DIR/../linux" "$WORK_DIR/linux-src"; do
-    if [ -f "$d/Makefile" ]; then LINUX_SRC="$d"; break; fi
-done
+# Auto-detect existing Linux source (env override wins when already set)
+if [ -z "$LINUX_SRC" ]; then
+    for d in "$ARTI_DIR/../linux" "$WORK_DIR/linux-src"; do
+        if [ -f "$d/Makefile" ]; then LINUX_SRC="$d"; break; fi
+    done
+fi
 LINUX_SRC="${LINUX_SRC:-$WORK_DIR/linux-src}"
 LINUX_BUILD="${LINUX_BUILD:-}"
 [ -f "$WORK_DIR/arti-linux-build/arch/arm64/boot/Image" ] && LINUX_BUILD="${LINUX_BUILD:-$WORK_DIR/arti-linux-build}"
@@ -785,9 +789,13 @@ main(['generate', '$GEN_DIR/config.yaml', '--output', '$GEN_DIR/generated'])
     printf '%s\n' "$CONFIG_SIGNATURE" > "$CONFIG_STAMP"
 fi
 
-# Copy arti-rtl.c and arti_rtl_model.h into QEMU source tree
-cp "$GEN_DIR/generated/qemu/arti-rtl.c" "$QEMU_SRC/hw/misc/arti-rtl.c"
-cp "$GEN_DIR/generated/embedded/arti_rtl_model.h" "$QEMU_SRC/hw/misc/arti_rtl_model.h"
+# Copy arti-rtl.c and arti_rtl_model.h into QEMU source tree. Only refresh the
+# files when their content actually changed: unconditional copies would bump
+# mtimes and force a needless QEMU rebuild on every setup run.
+cmp -s "$GEN_DIR/generated/qemu/arti-rtl.c" "$QEMU_SRC/hw/misc/arti-rtl.c" || \
+    cp "$GEN_DIR/generated/qemu/arti-rtl.c" "$QEMU_SRC/hw/misc/arti-rtl.c"
+cmp -s "$GEN_DIR/generated/embedded/arti_rtl_model.h" "$QEMU_SRC/hw/misc/arti_rtl_model.h" || \
+    cp "$GEN_DIR/generated/embedded/arti_rtl_model.h" "$QEMU_SRC/hw/misc/arti_rtl_model.h"
 
 # 2c. Build the Verilated static library
 info "Building Verilated RTL model..."
@@ -820,11 +828,15 @@ else
     cd -
 fi
 
-# 2e. Configure and build QEMU
+# 2e. Configure and build QEMU. The binary must be newer than both the
+# arti-rtl glue and the Verilated model archive: the archive changes whenever
+# the embedded RTL model is regenerated, and skipping the relink would leave
+# QEMU running a stale model while setup reports success.
 if [ "${SKIP_QEMU_REBUILD:-0}" = "1" ] && [ -f "$QEMU_BUILD/qemu-system-aarch64" ]; then
     info "Skipping QEMU rebuild (SKIP_QEMU_REBUILD=1)"
 elif [ -f "$QEMU_BUILD/qemu-system-aarch64" ] && \
-   [ ! "$QEMU_SRC/hw/misc/arti-rtl.c" -nt "$QEMU_BUILD/qemu-system-aarch64" ]; then
+   [ ! "$QEMU_SRC/hw/misc/arti-rtl.c" -nt "$QEMU_BUILD/qemu-system-aarch64" ] && \
+   [ ! "$QEMU_SRC/hw/misc/libarti_rtl_model.a" -nt "$QEMU_BUILD/qemu-system-aarch64" ]; then
     info "QEMU already built at $QEMU_BUILD/qemu-system-aarch64"
 else
     info "Configuring QEMU..."
