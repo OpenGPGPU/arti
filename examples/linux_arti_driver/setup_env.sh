@@ -1006,10 +1006,11 @@ else
     fi
     cd "$BUSYBOX_DIR"
     info "Configuring busybox (static)..."
-    # Some BusyBox releases prompt for newly introduced defaults even during
-    # defconfig when a stale .config is present.  Feed empty answers so the
-    # one-click setup remains non-interactive in CI and background jobs.
-    yes "" | make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" defconfig 2>&1 | tail -3
+    # Drop a stale .config so defconfig stays non-interactive. Do not use
+    # `yes | make | tail` under `set -o pipefail`: yes exits 141 on SIGPIPE and
+    # aborts the whole setup right after the last config prompt with no error.
+    rm -f .config
+    make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" defconfig 2>&1 | tail -3
     sedi 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
     make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$BUILD_JOBS" 2>&1 | tail -5
     [ -f "$BUSYBOX_DIR/busybox" ] || fail "Busybox build failed"
