@@ -14,11 +14,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+. "$SCRIPT_DIR/integration_env.sh"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
 RTL_INPUT="${RTL:-examples/simple_gpio/simple_gpio.v}"
 TOP="${TOP:-simple_gpio}"
 QEMU_SRC="${QEMU_SRC:-$(cd "$ARTI_DIR/../qemu" && pwd)}"
-QEMU_BUILD="${QEMU_BUILD:-/tmp/qemu-arti-build}"
-OUTPUT="${OUTPUT:-/tmp/arti-embedded-gen}"
+QEMU_BUILD="${QEMU_BUILD:-$ARTI_WORK/qemu-arti-build}"
+OUTPUT="${OUTPUT:-$ARTI_WORK/arti-embedded-gen}"
 ARTI_MMIO_BASE="${ARTI_MMIO_BASE:-0x0B000000}"
 INTEGRATION_CONFIG="${INTEGRATION_CONFIG:-}"
 

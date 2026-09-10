@@ -7,8 +7,8 @@
 # Data path: guest MMIO -> QEMU arti-rtl (embedded Verilated model) -> RTL
 #
 # Prerequisites:
-#   - QEMU binary:   QEMU=/tmp/qemu-arti-build/qemu-system-aarch64
-#   - Kernel Image:  KERNEL=/tmp/arti-linux-build/arch/arm64/boot/Image
+#   - QEMU binary:   $ARTI_WORK/qemu-arti-build/qemu-system-aarch64
+#   - Kernel Image:  $ARTI_WORK/arti-linux-build/arch/arm64/boot/Image
 #   - Cross GCC:     aarch64-linux-gnu-gcc (or aarch64-unknown-linux-gnu-gcc)
 set -euo pipefail
 
@@ -18,21 +18,23 @@ ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 . "$SCRIPT_DIR/driver_preflight.sh"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
-QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
+QEMU="${QEMU:-$ARTI_WORK/qemu-arti-build/qemu-system-aarch64}"
 QEMU_FW_DIR="${QEMU_FW_DIR:-}"
 if [ -z "$QEMU_FW_DIR" ]; then
-    for fw_candidate in "${QEMU_SRC:+$QEMU_SRC/pc-bios}" \
-                        /tmp/qemu-src/qemu-11.1.0/pc-bios \
-                        /tmp/qemu-11.1.0/pc-bios; do
+    for fw_candidate in "$ARTI_WORK/qemu-pc-bios" \
+                        "${QEMU_SRC:+$QEMU_SRC/pc-bios}" \
+                        "$ARTI_WORK/qemu-11.1.0/pc-bios" \
+                        "$ARTI_WORK/qemu-src/pc-bios"; do
         if [ -n "$fw_candidate" ] && [ -f "$fw_candidate/efi-virtio.rom" ]; then
             QEMU_FW_DIR="$fw_candidate"
             break
         fi
     done
 fi
-KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
-LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
-WORK="${WORK:-/tmp/arti-linux-test}"
+LINUX_BUILD="${LINUX_BUILD:-$ARTI_WORK/arti-linux-build}"
+KERNEL="${KERNEL:-$LINUX_BUILD/arch/arm64/boot/Image}"
+WORK="${WORK:-$ARTI_WORK/linux-test}"
 TIMEOUT="${TIMEOUT:-60}"
 SERIAL_LOG="$WORK/serial.log"
 GPU_DRM_TEST="${GPU_DRM_TEST:-0}"

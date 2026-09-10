@@ -7,22 +7,19 @@
 #   - ARTI embedded device at MMIO 0x0B000000
 #   - Root login (password: arti)
 #
-# Prerequisites:
-#   - QEMU binary:   QEMU=/tmp/qemu-arti-build/qemu-system-aarch64
-#   - Kernel Image:  KERNEL=/tmp/arti-linux-build/arch/arm64/boot/Image
-#   - Debian disk:   DISK=/tmp/arti-dev.qcow2
-#   - Cloud-init:    CIDATA=/tmp/cloud-init.iso
+# Prerequisites live under $ARTI_WORK (../arti-work from the ARTI repo).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-. "$SCRIPT_DIR/integration_env.sh"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+. "$SCRIPT_DIR/integration_env.sh"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
-QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
-KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
-DISK="${DISK:-/tmp/arti-dev.qcow2}"
-CIDATA="${CIDATA:-/tmp/cloud-init.iso}"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
+QEMU="${QEMU:-$ARTI_WORK/qemu-arti-build/qemu-system-aarch64}"
+KERNEL="${KERNEL:-$ARTI_WORK/arti-linux-build/arch/arm64/boot/Image}"
+DISK="${DISK:-$ARTI_WORK/arti-dev.qcow2}"
+CIDATA="${CIDATA:-$ARTI_WORK/cloud-init.iso}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
 DRIVER_KO="${DRIVER_KO:-}"
 SSH_PORT="${SSH_PORT:-}"

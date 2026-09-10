@@ -663,11 +663,45 @@ class MultiProtocolTest(unittest.TestCase):
         globals_, drive, capture = _memory_bridge_for_axi4(
             ModuleSignature("gpu", ports)
         )
-        self.assertIn("g_cbMem_pending", globals_)
-        self.assertIn("g_fbMem_pending", globals_)
+        self.assertIn("g_cbMem_resp", globals_)
+        self.assertIn("g_fbMem_resp", globals_)
         self.assertIn("io_cbMem_req_ready", drive)
         self.assertIn("g_mem_read_cb(addr, bytes, 4, 0)", capture)
         self.assertIn("g_mem_write_cb(addr, bytes, 4, 0xf, 0)", capture)
+
+    def test_axi4_master_is_discovered_by_protocol_shape(self):
+        directions = {
+            "awaddr": "output", "awlen": "output", "awsize": "output",
+            "awvalid": "output", "awready": "input", "wdata": "output",
+            "wstrb": "output", "wlast": "output", "wvalid": "output",
+            "wready": "input", "bresp": "input", "bvalid": "input",
+            "bready": "output", "araddr": "output", "arlen": "output",
+            "arsize": "output", "arvalid": "output", "arready": "input",
+            "rdata": "input", "rresp": "input", "rlast": "input",
+            "rvalid": "input", "rready": "output",
+        }
+        widths = {
+            "awaddr": 32, "awlen": 8, "awsize": 3, "wdata": 64,
+            "wstrb": 8, "bresp": 2, "araddr": 32, "arlen": 8,
+            "arsize": 3, "rdata": 64, "rresp": 2,
+        }
+        ports = [Port("fabric_mem_" + name, direction, widths.get(name, 1))
+                 for name, direction in directions.items()]
+        for name, direction, width in (
+            ("awid", "output", 6), ("bid", "input", 6),
+            ("arid", "output", 6), ("rid", "input", 6),
+        ):
+            ports.append(Port("fabric_mem_" + name, direction, width))
+
+        globals_, drive, capture = _memory_bridge_for_axi4(
+            ModuleSignature("gpu", ports)
+        )
+        self.assertIn("g_fabric_mem_aw_active", globals_)
+        self.assertIn("fabric_mem_awready", drive)
+        self.assertIn("fabric_mem_rdata", drive)
+        self.assertIn("g_mem_read_cb", capture)
+        self.assertIn("g_mem_write_cb", capture)
+        self.assertIn("fabric_mem_awid", capture)
 
     def test_non_axilite_protocol_in_local_mode(self):
         """Non-AXI-Lite protocols should generate a generic bridge in local mode."""

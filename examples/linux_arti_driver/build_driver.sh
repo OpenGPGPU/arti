@@ -8,13 +8,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
+. "$SCRIPT_DIR/integration_env.sh"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
+LINUX_BUILD="${LINUX_BUILD:-$ARTI_WORK/arti-linux-build}"
 DRIVER_DIR="${DRIVER_DIR:-}"
 DRIVER_SRC="${DRIVER_SRC:-}"
 DRIVER_NAME="${DRIVER_NAME:-}"
 DRIVER_MODULE="${DRIVER_MODULE:-}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
-OUTPUT="${OUTPUT:-/tmp/arti-driver-ko}"
+OUTPUT="${OUTPUT:-$ARTI_WORK/arti-driver-ko}"
 HOSTCFLAGS="${HOSTCFLAGS:-}"
 
 usage() {

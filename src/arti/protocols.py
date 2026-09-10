@@ -54,8 +54,35 @@ def _irq_check_func(interrupts):
 
 
 def _memory_bridge_for_axi4(signature):
-    """Render adapters from common Decoupled memory clients to one callback ABI."""
+    """Render memory responders for AXI masters and legacy private clients."""
     names = {p.name for p in signature.ports}
+    ports = {p.name: p for p in signature.ports}
+
+    # Discover AXI memory masters by protocol shape and signal direction. The
+    # prefix is intentionally unconstrained: m_axi, memory_axi, and generated
+    # Chisel names all work without exposing a GPU-specific naming ABI.
+    master_required = {
+        "awaddr": "output", "awlen": "output", "awsize": "output",
+        "awvalid": "output", "awready": "input", "wdata": "output",
+        "wstrb": "output", "wlast": "output", "wvalid": "output",
+        "wready": "input", "bresp": "input", "bvalid": "input",
+        "bready": "output", "araddr": "output", "arlen": "output",
+        "arsize": "output", "arvalid": "output", "arready": "input",
+        "rdata": "input", "rresp": "input", "rlast": "input",
+        "rvalid": "input", "rready": "output",
+    }
+    axi_masters = []
+    for name, port in ports.items():
+        if not name.lower().endswith("awaddr") or port.direction != "output":
+            continue
+        prefix = name[:-len("awaddr")]
+        signals = {suffix: prefix + suffix for suffix in master_required}
+        if all(signal in ports and ports[signal].direction == direction
+               for suffix, direction in master_required.items()
+               for signal in (signals[suffix],)):
+            data_width = ports[signals["wdata"]].width
+            if data_width <= 64 and data_width % 8 == 0:
+                axi_masters.append((prefix, signals, data_width))
     word_channels = []
     for prefix in ("io_cbMem", "io_fbMem", "io_texMem"):
         required = {
@@ -85,7 +112,7 @@ def _memory_bridge_for_axi4(signature):
         if required <= names:
             line_channels.append((req, resp))
 
-    if not word_channels and not line_channels:
+    if not word_channels and not line_channels and not axi_masters:
         return "", "", ""
 
     globals_ = [
@@ -97,6 +124,100 @@ def _memory_bridge_for_axi4(signature):
     ]
     drive = []
     capture = []
+    for prefix, signal, data_width in axi_masters:
+        ident = "".join(c if c.isalnum() or c == "_" else "_"
+                        for c in prefix.removeprefix("io_").rstrip("_"))
+        bus_bytes = data_width // 8
+        awid = prefix + "awid"
+        bid = prefix + "bid"
+        arid = prefix + "arid"
+        rid = prefix + "rid"
+        has_ids = all(name in ports for name in (awid, bid, arid, rid))
+        globals_.extend([
+            f"struct ArtiAxiWriteBeat_{ident} {{ uint64_t data; uint64_t strb; bool last; }};",
+            f"struct ArtiAxiWriteResp_{ident} {{ uint64_t id; uint8_t resp; }};",
+            f"struct ArtiAxiReadBeat_{ident} {{ uint64_t data; uint64_t id; uint8_t resp; bool last; }};",
+            f"static std::deque<ArtiAxiWriteBeat_{ident}> g_{ident}_wbeats;",
+            f"static std::deque<ArtiAxiWriteResp_{ident}> g_{ident}_bresp;",
+            f"static std::deque<ArtiAxiReadBeat_{ident}> g_{ident}_rresp;",
+            f"static bool g_{ident}_aw_active;",
+            f"static uint64_t g_{ident}_aw_addr, g_{ident}_aw_id;",
+            f"static unsigned g_{ident}_aw_size, g_{ident}_aw_beat;",
+            f"static int g_{ident}_write_status;",
+        ])
+        drive.extend([
+            f"    g_rtl->{signal['awready']} = !g_{ident}_aw_active;",
+            f"    g_rtl->{signal['wready']} = 1;",
+            f"    g_rtl->{signal['arready']} = 1;",
+            f"    g_rtl->{signal['bvalid']} = !g_{ident}_bresp.empty();",
+            f"    g_rtl->{signal['bresp']} = g_{ident}_bresp.empty() ? 0 : g_{ident}_bresp.front().resp;",
+        ])
+        if has_ids:
+            drive.append(
+                f"    g_rtl->{bid} = g_{ident}_bresp.empty() ? 0 : g_{ident}_bresp.front().id;")
+        drive.extend([
+            f"    g_rtl->{signal['rvalid']} = !g_{ident}_rresp.empty();",
+            f"    g_rtl->{signal['rdata']} = g_{ident}_rresp.empty() ? 0 : g_{ident}_rresp.front().data;",
+            f"    g_rtl->{signal['rresp']} = g_{ident}_rresp.empty() ? 0 : g_{ident}_rresp.front().resp;",
+            f"    g_rtl->{signal['rlast']} = !g_{ident}_rresp.empty() && g_{ident}_rresp.front().last;",
+        ])
+        if has_ids:
+            drive.append(
+                f"    g_rtl->{rid} = g_{ident}_rresp.empty() ? 0 : g_{ident}_rresp.front().id;")
+        capture.extend([
+            f"    if (!g_{ident}_bresp.empty() && g_rtl->{signal['bready']})",
+            f"        g_{ident}_bresp.pop_front();",
+            f"    if (!g_{ident}_rresp.empty() && g_rtl->{signal['rready']})",
+            f"        g_{ident}_rresp.pop_front();",
+            f"    if (g_rtl->{signal['awvalid']} && g_rtl->{signal['awready']}) {{",
+            f"        g_{ident}_aw_active = true;",
+            f"        g_{ident}_aw_addr = g_rtl->{signal['awaddr']};",
+            f"        g_{ident}_aw_id = " + (f"g_rtl->{awid};" if has_ids else "0;"),
+            f"        g_{ident}_aw_size = 1u << g_rtl->{signal['awsize']};",
+            f"        g_{ident}_aw_beat = 0;",
+            f"        g_{ident}_write_status = 0;",
+            "    }",
+            f"    if (g_rtl->{signal['wvalid']} && g_rtl->{signal['wready']})",
+            f"        g_{ident}_wbeats.push_back({{(uint64_t)g_rtl->{signal['wdata']}, (uint64_t)g_rtl->{signal['wstrb']}, !!g_rtl->{signal['wlast']}}});",
+            f"    if (g_{ident}_aw_active && !g_{ident}_wbeats.empty()) {{",
+            f"        ArtiAxiWriteBeat_{ident} w = g_{ident}_wbeats.front();",
+            f"        g_{ident}_wbeats.pop_front();",
+            f"        uint64_t addr = g_{ident}_aw_addr + (uint64_t)g_{ident}_aw_beat * g_{ident}_aw_size;",
+            f"        unsigned lane = addr & {bus_bytes - 1};",
+            f"        unsigned size = g_{ident}_aw_size;",
+            f"        if (size > {bus_bytes} - lane) size = {bus_bytes} - lane;",
+            f"        uint64_t data = w.data >> (lane * 8);",
+            f"        uint64_t mask = w.strb >> lane;",
+            "        int status = -1;",
+            "        if (g_mem_write_cb)",
+            f"            status = g_mem_write_cb(addr, (const uint8_t *)&data, size, mask, g_{ident}_aw_id);",
+            f"        if (status != 0) g_{ident}_write_status = status;",
+            f'        if (g_arti_debug == 1 && mask) fprintf(stderr, "[artidbg] AXI-W {ident} addr=0x%llx size=%u data=0x%llx mask=0x%llx id=%llu\\n", (unsigned long long)addr, size, (unsigned long long)data, (unsigned long long)mask, (unsigned long long)g_{ident}_aw_id);',
+            f"        g_{ident}_aw_beat++;",
+            "        g_arti_idle = 0;",
+            "        if (w.last) {",
+            f"            g_{ident}_bresp.push_back({{g_{ident}_aw_id, (uint8_t)(g_{ident}_write_status ? 2 : 0)}});",
+            f"            g_{ident}_aw_active = false;",
+            "        }",
+            "    }",
+            f"    if (g_rtl->{signal['arvalid']} && g_rtl->{signal['arready']}) {{",
+            f"        uint64_t base = g_rtl->{signal['araddr']};",
+            f"        uint64_t id = " + (f"g_rtl->{arid};" if has_ids else "0;"),
+            f"        unsigned size = 1u << g_rtl->{signal['arsize']};",
+            f"        unsigned beats = 1u + g_rtl->{signal['arlen']};",
+            "        for (unsigned beat = 0; beat < beats; beat++) {",
+            "            uint64_t addr = base + (uint64_t)beat * size;",
+            f"            unsigned lane = addr & {bus_bytes - 1};",
+            f"            unsigned transfer = size > {bus_bytes} - lane ? {bus_bytes} - lane : size;",
+            "            uint64_t data = 0;",
+            "            int status = g_mem_read_cb ? g_mem_read_cb(addr, (uint8_t *)&data, transfer, id) : -1;",
+            f'            if (g_arti_debug == 1) fprintf(stderr, "[artidbg] AXI-R {ident} addr=0x%llx size=%u data=0x%llx id=%llu\\n", (unsigned long long)addr, transfer, (unsigned long long)data, (unsigned long long)id);',
+            f"            data <<= lane * 8;",
+            f"            g_{ident}_rresp.push_back({{data, id, (uint8_t)(status ? 2 : 0), beat + 1 == beats}});",
+            "        }",
+            "        g_arti_idle = 0;",
+            "    }",
+        ])
     for prefix, word_tagged in word_channels:
         ident = prefix.removeprefix("io_")
         globals_.append(f"static std::deque<ArtiWordResp> g_{ident}_resp;")

@@ -4,18 +4,16 @@
 # The guest has full busybox + kmod (insmod/lsmod/rmmod) + devmem,
 # so you can manually interact with the RTL device at 0x0B000000.
 #
-# Prerequisites:
-#   - QEMU binary:   QEMU=/tmp/qemu-arti-build/qemu-system-aarch64
-#   - Kernel Image:  KERNEL=/tmp/arti-linux-build/arch/arm64/boot/Image
-#   - Alpine rootfs: ROOTFS=/tmp/arti-alpine.cpio.gz
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+. "$SCRIPT_DIR/integration_env.sh"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
 
-QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
-KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
-ROOTFS="${ROOTFS:-/tmp/arti-alpine.cpio.gz}"
+QEMU="${QEMU:-$ARTI_WORK/qemu-arti-build/qemu-system-aarch64}"
+KERNEL="${KERNEL:-$ARTI_WORK/arti-linux-build/arch/arm64/boot/Image}"
+ROOTFS="${ROOTFS:-$ARTI_WORK/arti-alpine.cpio.gz}"
 
 [ -f "$QEMU" ]  || { echo "FAIL: QEMU not found at $QEMU"; exit 1; }
 [ -f "$KERNEL" ] || { echo "FAIL: kernel not found at $KERNEL"; exit 1; }

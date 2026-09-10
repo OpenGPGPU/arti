@@ -11,11 +11,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+. "$SCRIPT_DIR/integration_env.sh"
 MODE="${1:-test}"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
 
 # Step 1: Ensure environment is set up
-if [ ! -f /tmp/qemu-arti-build/qemu-system-aarch64 ] || \
-   [ ! -f /tmp/arti-linux-build/arch/arm64/boot/Image ] || \
+if [ ! -f "$ARTI_WORK/qemu-arti-build/qemu-system-aarch64" ] || \
+   [ ! -f "$ARTI_WORK/arti-linux-build/arch/arm64/boot/Image" ] || \
    [ ! -f "$SCRIPT_DIR/arti_rtl_test.ko" ] || \
    [ -n "${INTEGRATION_CONFIG:-}" ] || \
    { [ "${GPU_REFERENCE:-0}" = "1" ] && \

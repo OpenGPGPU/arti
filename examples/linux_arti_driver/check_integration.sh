@@ -8,9 +8,10 @@ ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 . "$SCRIPT_DIR/driver_preflight.sh"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
 
-QEMU="${QEMU:-/tmp/qemu-arti-build/qemu-system-aarch64}"
-KERNEL="${KERNEL:-/tmp/arti-linux-build/arch/arm64/boot/Image}"
-LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
+QEMU="${QEMU:-$ARTI_WORK/qemu-arti-build/qemu-system-aarch64}"
+LINUX_BUILD="${LINUX_BUILD:-$ARTI_WORK/arti-linux-build}"
+KERNEL="${KERNEL:-$LINUX_BUILD/arch/arm64/boot/Image}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
 GPU_DRM_TEST="${GPU_DRM_TEST:-0}"
 DRIVER_KO="${DRIVER_KO:-}"

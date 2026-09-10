@@ -18,6 +18,20 @@ fi
 : "${ARTI_PYTHON:=python3}"
 export ARTI_PYTHON
 
+# Persistent artifact root. macOS /tmp is reaped; keep QEMU/Linux/busybox
+# next to the sibling repos unless the caller overrides ARTI_WORK or WORK_DIR.
+arti_default_work_dir() {
+    if [ -n "${ARTI_WORK:-}" ]; then
+        printf '%s' "$ARTI_WORK"
+        return 0
+    fi
+    if [ -n "${ARTI_DIR:-}" ] && [ -d "$ARTI_DIR" ]; then
+        printf '%s' "$(cd "$ARTI_DIR/.." && pwd)/arti-work"
+        return 0
+    fi
+    printf '%s' "${HOME}/.cache/arti"
+}
+
 arti_load_integration_config() {
     local explicit=0
     [ -z "${INTEGRATION_CONFIG:-}" ] || explicit=1

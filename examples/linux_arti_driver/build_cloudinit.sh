@@ -14,8 +14,9 @@ GPU_KO="${GPU_KO:-$SCRIPT_DIR/arti_gpu_probe.ko}"
 DRM_KO="${DRM_KO:-$SCRIPT_DIR/arti_gpu_drm.ko}"
 DRIVER_KO="${DRIVER_KO:-}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
-LINUX_BUILD="${LINUX_BUILD:-/tmp/arti-linux-build}"
-OUTPUT="${OUTPUT:-/tmp/cloud-init.iso}"
+ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
+LINUX_BUILD="${LINUX_BUILD:-$ARTI_WORK/arti-linux-build}"
+OUTPUT="${OUTPUT:-$ARTI_WORK/cloud-init.iso}"
 
 [ -f "$KO" ] || { echo "FAIL: $KO not found"; exit 1; }
 [ "$GPU_REFERENCE" != "1" ] || {

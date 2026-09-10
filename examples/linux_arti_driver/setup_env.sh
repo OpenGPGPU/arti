@@ -27,7 +27,10 @@ ARTI_RTL_TOP_FROM_ENV="${ARTI_RTL_TOP+x}"
 ARTI_RTL_SOURCE_FROM_ENV="${ARTI_RTL_SOURCE+x}"
 ARTI_DT_COMPAT_FROM_ENV="${ARTI_DT_COMPAT+x}"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
-WORK_DIR="${WORK_DIR:-/tmp}"
+WORK_DIR="${WORK_DIR:-$(arti_default_work_dir)}"
+mkdir -p "$WORK_DIR"
+ARTI_WORK="${ARTI_WORK:-$WORK_DIR}"
+export ARTI_WORK
 QEMU_SRC="${QEMU_SRC:-}"
 # Auto-detect existing QEMU source (env override wins when already set)
 if [ -z "$QEMU_SRC" ]; then
@@ -46,7 +49,7 @@ LINUX_SRC="${LINUX_SRC:-}"
 # Auto-detect existing Linux source (env override wins when already set)
 if [ -z "$LINUX_SRC" ]; then
     for d in "$ARTI_DIR/../linux" "$WORK_DIR/linux-src"; do
-        if [ -f "$d/Makefile" ]; then LINUX_SRC="$d"; break; fi
+        if [ -f "$d/Makefile" ] && [ -f "$d/usr/gen_init_cpio.c" ]; then LINUX_SRC="$d"; break; fi
     done
 fi
 LINUX_SRC="${LINUX_SRC:-$WORK_DIR/linux-src}"
@@ -648,7 +651,6 @@ sedi() {
 # ---------------------------------------------------------------------------
 step "Step 0/7: Checking system dependencies"
 
-check_cmd verilator
 check_cmd "$ARTI_PYTHON"
 check_cmd g++
 check_cmd git
@@ -658,6 +660,21 @@ check_cmd cpio
 check_cmd pkg-config
 check_cmd meson
 check_cmd make
+
+ARTI_RTL_BACKEND="${ARTI_RTL_BACKEND:-verilator}"
+case "$ARTI_RTL_BACKEND" in
+    verilator)
+        check_cmd verilator
+        ;;
+    flashsim)
+        FLASHSIM_DIR="${FLASHSIM_DIR:-$ARTI_DIR/../FlashSim}"
+        [ -d "$FLASHSIM_DIR/flashsim" ] || \
+            fail "FlashSim not found at $FLASHSIM_DIR (set FLASHSIM_DIR)"
+        ;;
+    *)
+        fail "ARTI_RTL_BACKEND must be verilator or flashsim, got $ARTI_RTL_BACKEND"
+        ;;
+esac
 
 ensure_macos_gnu_tools
 ensure_qemu_build_deps
@@ -677,7 +694,11 @@ info "System dependencies OK"
 # ---------------------------------------------------------------------------
 step "Step 1/7: Installing build tools (ninja)"
 
-if [ -f "$QEMU_TOOLS/bin/ninja" ]; then
+if command -v ninja >/dev/null 2>&1; then
+    mkdir -p "$QEMU_TOOLS/bin"
+    ln -sfn "$(command -v ninja)" "$QEMU_TOOLS/bin/ninja"
+    info "ninja already installed at $QEMU_TOOLS/bin/ninja"
+elif [ -f "$QEMU_TOOLS/bin/ninja" ]; then
     info "ninja already installed at $QEMU_TOOLS/bin/ninja"
 else
     info "Installing ninja via pip --target..."
@@ -699,7 +720,14 @@ if [ -f "$QEMU_SRC/configure" ]; then
 else
     info "Downloading QEMU v$QEMU_VERSION source..."
     mkdir -p "$(dirname "$QEMU_SRC")"
-    curl -sSL "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" | tar xJ -C "$(dirname "$QEMU_SRC")"
+    QEMU_TARBALL="$WORK_DIR/qemu-${QEMU_VERSION}.tar.xz"
+    if [ ! -f "$QEMU_TARBALL" ]; then
+        curl -fL --retry 5 --retry-all-errors --http1.1 \
+            -o "$QEMU_TARBALL.partial" \
+            "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz"
+        mv "$QEMU_TARBALL.partial" "$QEMU_TARBALL"
+    fi
+    tar xJf "$QEMU_TARBALL" -C "$(dirname "$QEMU_SRC")"
     mv "$(dirname "$QEMU_SRC")/qemu-${QEMU_VERSION}" "$QEMU_SRC" 2>/dev/null || true
     [ -f "$QEMU_SRC/configure" ] || fail "QEMU source download failed"
 fi
@@ -756,6 +784,7 @@ for raw_path in sys.argv[2].split(","):
 print(h.hexdigest())
 PY
 )"
+CONFIG_SIGNATURE="${ARTI_RTL_BACKEND:-verilator}:$CONFIG_SIGNATURE"
 
 EXPECT_DISPLAY=0
 if [ "${ARTI_DISPLAY:-0}" = "1" ] || [ "${ARTI_DISPLAY:-0}" = "true" ]; then
@@ -766,14 +795,27 @@ if grep -q "GraphicHwOps" "$GEN_DIR/generated/qemu/arti-rtl.c" 2>/dev/null; then
     STUB_HAS_DISPLAY=1
 fi
 
+WRAPPER_OK=0
 if [ -f "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" ] && \
-   grep -q "SKIP_QEMU_REBUILD" "$GEN_DIR/generated/embedded/build_embedded.sh" && \
-   grep -q "sc_time_stamp" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
+   [ -f "$GEN_DIR/generated/embedded/build_embedded.sh" ] && \
+   grep -q "SKIP_QEMU_REBUILD" "$GEN_DIR/generated/embedded/build_embedded.sh"; then
+    if [ "$ARTI_RTL_BACKEND" = "flashsim" ]; then
+        if grep -q "FlashSim ARTI backend" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
+           grep -q "${ARTI_RTL_TOP}Dut" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
+           [ -f "$GEN_DIR/generated/embedded/dut.h" ]; then
+            WRAPPER_OK=1
+        fi
+    elif grep -q "sc_time_stamp" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
+         grep -q "V${ARTI_RTL_TOP}" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp"; then
+        WRAPPER_OK=1
+    fi
+fi
+
+if [ "$WRAPPER_OK" = "1" ] && \
    grep -q "arti-qemu-stub-v4" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    ! grep -q '"hw/irq.h"' "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    ! grep -q "QEMU_CLOCK_VIRTUAL" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
    grep -q "arti_update_irqs" "$GEN_DIR/generated/qemu/arti-rtl.c" && \
-   grep -q "V${ARTI_RTL_TOP}" "$GEN_DIR/generated/embedded/arti_rtl_model.cpp" && \
    [ -f "$CONFIG_STAMP" ] && [ "$(<"$CONFIG_STAMP")" = "$CONFIG_SIGNATURE" ] && \
    [ "$STUB_HAS_DISPLAY" = "$EXPECT_DISPLAY" ]; then
     info "Embedded model already generated"
@@ -785,6 +827,15 @@ import sys; sys.path.insert(0, '$ARTI_DIR/src')
 from arti.cli import main
 main(['generate', '$GEN_DIR/config.yaml', '--output', '$GEN_DIR/generated'])
     " || fail "Failed to generate embedded model"
+    if [ "$ARTI_RTL_BACKEND" = "flashsim" ]; then
+        info "Compiling $ARTI_RTL_TOP with FlashSim..."
+        FLASHSIM_DIR="${FLASHSIM_DIR:-$ARTI_DIR/../FlashSim}"
+        PYTHONPATH="$FLASHSIM_DIR${PYTHONPATH:+:$PYTHONPATH}" "$ARTI_PYTHON" -m flashsim arti-model \
+            "$ARTI_RTL_SOURCE" \
+            -o "$GEN_DIR/generated/embedded" \
+            --top "$ARTI_RTL_TOP" || \
+            fail "FlashSim failed to emit the ARTI embedded model"
+    fi
     mkdir -p "$(dirname "$CONFIG_STAMP")"
     printf '%s\n' "$CONFIG_SIGNATURE" > "$CONFIG_STAMP"
 fi
@@ -797,10 +848,14 @@ cmp -s "$GEN_DIR/generated/qemu/arti-rtl.c" "$QEMU_SRC/hw/misc/arti-rtl.c" || \
 cmp -s "$GEN_DIR/generated/embedded/arti_rtl_model.h" "$QEMU_SRC/hw/misc/arti_rtl_model.h" || \
     cp "$GEN_DIR/generated/embedded/arti_rtl_model.h" "$QEMU_SRC/hw/misc/arti_rtl_model.h"
 
-# 2c. Build the Verilated static library
-info "Building Verilated RTL model..."
-VERILATOR_INC="${VERILATOR_INC:-$(dirname $(dirname $(which verilator)))/share/verilator/include}"
-if ! QEMU_SRC="$QEMU_SRC" QEMU_BUILD="$QEMU_BUILD" VERILATOR_INC="$VERILATOR_INC" \
+# 2c. Build the embedded RTL static library
+if [ "$ARTI_RTL_BACKEND" = "flashsim" ]; then
+    info "Building FlashSim RTL model..."
+else
+    info "Building Verilated RTL model..."
+    VERILATOR_INC="${VERILATOR_INC:-$(dirname $(dirname $(which verilator)))/share/verilator/include}"
+fi
+if ! QEMU_SRC="$QEMU_SRC" QEMU_BUILD="$QEMU_BUILD" VERILATOR_INC="${VERILATOR_INC:-}" \
         SKIP_QEMU_REBUILD=1 bash "$GEN_DIR/generated/embedded/build_embedded.sh" 2>&1 | tail -5; then
     fail "Failed to build embedded RTL model"
 fi
@@ -887,8 +942,15 @@ if [ -f "$LINUX_BUILD/arch/arm64/boot/Image" ] && [ -f "$ARTI_KERNEL_MARKER" ]; 
     info "Kernel already built at $LINUX_BUILD/arch/arm64/boot/Image"
 else
     info "Downloading Linux v$LINUX_VERSION source..."
-    if [ ! -f "$LINUX_SRC/Makefile" ]; then
-        curl -sSL "https://cdn.kernel.org/pub/linux/kernel/v${LINUX_VERSION%%.*}.x/linux-${LINUX_VERSION}.tar.xz" | tar xJ -C "$(dirname "$LINUX_SRC")"
+    if [ ! -f "$LINUX_SRC/Makefile" ] || [ ! -f "$LINUX_SRC/usr/gen_init_cpio.c" ]; then
+        LINUX_TARBALL="$WORK_DIR/linux-${LINUX_VERSION}.tar.xz"
+        if [ ! -f "$LINUX_TARBALL" ]; then
+            curl -fL --retry 5 --retry-all-errors --http1.1 \
+                -o "$LINUX_TARBALL.partial" \
+                "https://cdn.kernel.org/pub/linux/kernel/v${LINUX_VERSION%%.*}.x/linux-${LINUX_VERSION}.tar.xz"
+            mv "$LINUX_TARBALL.partial" "$LINUX_TARBALL"
+        fi
+        tar xJf "$LINUX_TARBALL" -C "$(dirname "$LINUX_SRC")"
         mv "$(dirname "$LINUX_SRC")/linux-${LINUX_VERSION}" "$LINUX_SRC" 2>/dev/null || true
     fi
     [ -f "$LINUX_SRC/Makefile" ] || fail "Linux source download failed"
