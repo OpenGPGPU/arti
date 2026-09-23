@@ -119,6 +119,7 @@ done
 if [ -n "$USERSPACE_DIR" ]; then
     for name in opengpu_compute_example opengpu_triangle_example \
                 opengpu_compute_shader.bin \
+                opengpu_fragment_tint opengpu_fragment_tint.bin \
                 opengpu_pipe_clear_draw opengpu_pipe_compute \
                 opengpu_pipe_blit opengpu_pipe_strided_blit \
                 opengpu_pipe_resolve opengpu_pipe_texture_draw \
@@ -174,16 +175,24 @@ fi
 if [ "${1:-}" = "examples" ]; then
   CARD="${2:-/dev/dri/card0}"
   SHADER=/root/opengpu_compute_shader.bin
-  run_one /root/opengpu_compute_example "$CARD" "$SHADER"
-  run_one /root/opengpu_triangle_example "$CARD"
-  run_one /root/opengpu_pipe_clear_draw "$CARD"
-  run_one /root/opengpu_pipe_compute "$CARD" "$SHADER"
-  run_one /root/opengpu_pipe_blit "$CARD"
-  run_one /root/opengpu_pipe_strided_blit "$CARD"
-  run_one /root/opengpu_pipe_resolve "$CARD"
-  run_one /root/opengpu_pipe_texture_draw "$CARD"
-  run_one /root/opengpu_pipe_depth_pass "$CARD"
-  run_one /root/opengpu_pipe_vertex_draw "$CARD"
+  TINT=/root/opengpu_fragment_tint.bin
+  if [ -x /root/opengpu_fragment_tint ]; then
+    run_one /root/opengpu_fragment_tint "$CARD" "$TINT"
+    run_one /root/opengpu_pipe_clear_draw "$CARD" "$TINT"
+    run_one /root/opengpu_pipe_resolve "$CARD"
+    run_one /root/opengpu_pipe_vertex_draw "$CARD"
+  else
+    run_one /root/opengpu_compute_example "$CARD" "$SHADER"
+    run_one /root/opengpu_triangle_example "$CARD"
+    run_one /root/opengpu_pipe_clear_draw "$CARD"
+    run_one /root/opengpu_pipe_compute "$CARD" "$SHADER"
+    run_one /root/opengpu_pipe_blit "$CARD"
+    run_one /root/opengpu_pipe_strided_blit "$CARD"
+    run_one /root/opengpu_pipe_resolve "$CARD"
+    run_one /root/opengpu_pipe_texture_draw "$CARD"
+    run_one /root/opengpu_pipe_depth_pass "$CARD"
+    run_one /root/opengpu_pipe_vertex_draw "$CARD"
+  fi
   echo "OPENGPU USERSPACE EXAMPLES PASS"
 fi
 EOS
