@@ -89,6 +89,20 @@ for cand in \
 done
 [ -z "$DRM_TEST" ] || echo "  test     : $DRM_TEST"
 
+USERSPACE_DIR=""
+for cand in \
+    "${OPENGPU_USERSPACE_DIR:-}" \
+    "${DRIVER_KO:+$(dirname "$DRIVER_KO")}" \
+    "$ARTI_WORK/opengpu-driver"; do
+    [ -n "$cand" ] && [ -d "$cand" ] || continue
+    if compgen -G "$cand/opengpu_pipe_*" >/dev/null 2>&1 || \
+       [ -f "$cand/opengpu_triangle_example" ]; then
+        USERSPACE_DIR="$cand"
+        break
+    fi
+done
+[ -z "$USERSPACE_DIR" ] || echo "  userspace: $USERSPACE_DIR"
+
 # --- Stage module files into a temp dir, then make label=OPENGPU ISO ----------
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/opengpu-mods.XXXXXX")"
 cleanup() { rm -rf "$STAGE"; }
@@ -102,6 +116,19 @@ for path in "${SUPPORT_MODULES[@]+"${SUPPORT_MODULES[@]}"}"; do
     cp "$path" "$STAGE/$(basename "$path")"
 done
 [ -z "$DRM_TEST" ] || cp "$DRM_TEST" "$STAGE/opengpu_drm_test"
+if [ -n "$USERSPACE_DIR" ]; then
+    for name in opengpu_compute_example opengpu_triangle_example \
+                opengpu_compute_shader.bin \
+                opengpu_pipe_clear_draw opengpu_pipe_compute \
+                opengpu_pipe_blit opengpu_pipe_strided_blit \
+                opengpu_pipe_resolve opengpu_pipe_texture_draw \
+                opengpu_pipe_depth_pass opengpu_pipe_vertex_draw; do
+        path="$USERSPACE_DIR/$name"
+        [ -f "$path" ] || continue
+        cp "$path" "$STAGE/$name"
+        echo "  staged   : $name"
+    done
+fi
 
 LOAD_ORDER=()
 for path in "${SUPPORT_MODULES[@]+"${SUPPORT_MODULES[@]}"}"; do
@@ -134,13 +161,35 @@ echo "--- dmesg (tail) ---"
 dmesg | tail -30
 echo "--- /dev/dri ---"
 ls -l /dev/dri 2>/dev/null || echo "(no /dev/dri yet)"
+run_one() {
+  bin="$1"; shift
+  [ -x "$bin" ] || return 0
+  echo "--- $bin ---"
+  "$bin" "$@"
+}
 if [ "${1:-}" = "test" ] && [ -x /root/opengpu_drm_test ]; then
   echo "--- opengpu_drm_test ---"
   /root/opengpu_drm_test
 fi
+if [ "${1:-}" = "examples" ]; then
+  CARD="${2:-/dev/dri/card0}"
+  SHADER=/root/opengpu_compute_shader.bin
+  run_one /root/opengpu_compute_example "$CARD" "$SHADER"
+  run_one /root/opengpu_triangle_example "$CARD"
+  run_one /root/opengpu_pipe_clear_draw "$CARD"
+  run_one /root/opengpu_pipe_compute "$CARD" "$SHADER"
+  run_one /root/opengpu_pipe_blit "$CARD"
+  run_one /root/opengpu_pipe_strided_blit "$CARD"
+  run_one /root/opengpu_pipe_resolve "$CARD"
+  run_one /root/opengpu_pipe_texture_draw "$CARD"
+  run_one /root/opengpu_pipe_depth_pass "$CARD"
+  run_one /root/opengpu_pipe_vertex_draw "$CARD"
+  echo "OPENGPU USERSPACE EXAMPLES PASS"
+fi
 EOS
 } > "$STAGE/load_opengpu.sh"
-chmod +x "$STAGE/load_opengpu.sh" "$STAGE/opengpu_drm_test" 2>/dev/null || chmod +x "$STAGE/load_opengpu.sh"
+chmod +x "$STAGE/load_opengpu.sh" 2>/dev/null || true
+chmod +x "$STAGE"/opengpu_* 2>/dev/null || true
 printf '%s\n' "${LOAD_ORDER[@]+"${LOAD_ORDER[@]}"}" > "$STAGE/arti_driver_load_order.txt"
 
 echo "  load order: $(IFS=' -> '; echo "${LOAD_ORDER[*]-}")"
@@ -188,7 +237,7 @@ write_files:
         exit 0
       fi
       cp -a /mnt/opengpu/. /root/
-      chmod +x /root/load_opengpu.sh /root/opengpu_drm_test 2>/dev/null || true
+      chmod +x /root/load_opengpu.sh /root/opengpu_* 2>/dev/null || true
       umount /mnt/opengpu || true
       echo "opengpu-sync: modules refreshed in /root"
   - path: /etc/systemd/system/opengpu-sync.service
@@ -246,4 +295,6 @@ xorriso -as mkisofs -V cidata -J -r -o "$OUTPUT" \
   "$CI_DIR/meta-data" "$CI_DIR/user-data" "$CI_DIR/network-config" 2>&1 | tail -2
 echo "=== cloud-init ISO built: $OUTPUT ($(wc -c < "$OUTPUT") bytes) ==="
 echo "=== modules ISO built:    $MODULES_ISO ($(wc -c < "$MODULES_ISO") bytes) ==="
-echo "Guest: /root/load_opengpu.sh  or  /root/load_opengpu.sh test"
+echo "Guest: /root/load_opengpu.sh"
+echo "       /root/load_opengpu.sh test"
+echo "       /root/load_opengpu.sh examples"
