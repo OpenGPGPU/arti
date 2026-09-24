@@ -118,7 +118,14 @@ case "$OPENGPU_AUTO_DISPLAY" in
             exit 1
         }
         ;;
-    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1 or gradient" >&2; exit 1 ;;
+    triangle)
+        [ -n "$DRIVER_KO" ] && [ -n "$USERSPACE_DIR" ] && \
+            [ -x "$USERSPACE_DIR/opengpu_triangle_present" ] || {
+            echo "FAIL: triangle display needs the external driver and opengpu_triangle_present" >&2
+            exit 1
+        }
+        ;;
+    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1, gradient or triangle" >&2; exit 1 ;;
 esac
 
 # --- Stage module files into a temp dir, then make label=OPENGPU ISO ----------
@@ -136,6 +143,7 @@ done
 [ -z "$DRM_TEST" ] || cp "$DRM_TEST" "$STAGE/opengpu_drm_test"
 if [ -n "$USERSPACE_DIR" ]; then
     for name in opengpu_kms_present \
+                opengpu_triangle_present \
                 opengpu_compute_example opengpu_triangle_example \
                 opengpu_compute_shader.bin \
                 opengpu_fragment_tint opengpu_fragment_tint.bin \
@@ -143,7 +151,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_pipe_blit opengpu_pipe_strided_blit \
                 opengpu_pipe_resolve opengpu_pipe_texture_draw \
                 opengpu_pipe_depth_pass opengpu_pipe_msaa_draw \
-                opengpu_pipe_vertex_draw; do
+                opengpu_pipe_vertex_draw opengpu_pipe_present; do
         path="$USERSPACE_DIR/$name"
         [ -f "$path" ] || continue
         cp "$path" "$STAGE/$name"
@@ -198,12 +206,16 @@ if [ "${1:-}" = "examples" ]; then
   TINT=/root/opengpu_fragment_tint.bin
   if [ -x /root/opengpu_fragment_tint ]; then
     run_one /root/opengpu_fragment_tint "$CARD" "$TINT"
+    run_one /root/opengpu_triangle_present "$CARD" "$TINT"
+    run_one /root/opengpu_pipe_present "$CARD" "$TINT"
     run_one /root/opengpu_pipe_clear_draw "$CARD" "$TINT"
     run_one /root/opengpu_pipe_resolve "$CARD"
     run_one /root/opengpu_pipe_vertex_draw "$CARD"
   else
     run_one /root/opengpu_compute_example "$CARD" "$SHADER"
     run_one /root/opengpu_triangle_example "$CARD"
+    run_one /root/opengpu_triangle_present "$CARD"
+    run_one /root/opengpu_pipe_present "$CARD"
     run_one /root/opengpu_pipe_clear_draw "$CARD"
     run_one /root/opengpu_pipe_compute "$CARD" "$SHADER"
     run_one /root/opengpu_pipe_blit "$CARD"
@@ -241,6 +253,8 @@ fi
 
 if [ "$OPENGPU_AUTO_DISPLAY" = "gradient" ]; then
     display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_kms_present /dev/dri/card0'
+elif [ "$OPENGPU_AUTO_DISPLAY" = "triangle" ]; then
+    display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_triangle_present /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold'
 else
     display_service=$'      Type=oneshot\n      RemainAfterExit=yes\n      ExecStart=/root/load_opengpu.sh'
 fi
@@ -329,8 +343,8 @@ runcmd:
   - sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
   - growpart /dev/vda 1 || true
   - resize2fs /dev/vda1 || true
-  # A service enabled by an earlier boot may already be running the gradient
-  # presenter. Stop it before replacing the unit with this instance's mode.
+  # A service enabled by an earlier boot may already be running a gradient or
+  # triangle presenter. Stop it before replacing the unit with this instance's mode.
   - systemctl stop opengpu-boot-display.service || true
   - systemctl daemon-reload
   - systemctl enable arti-net.service
