@@ -322,7 +322,9 @@ for f in V{mod}*.cpp; do
         pids=()
     fi
 done
-for pid in "${{pids[@]}}"; do wait "$pid"; done
+if (( ${{#pids[@]}} > 0 )); then
+    for pid in "${{pids[@]}}"; do wait "$pid"; done
+fi
 g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I"$VERILATOR_INC" -c "$VERILATOR_INC/verilated.cpp" -o verilated.o
 g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I"$VERILATOR_INC" -c "$VERILATOR_INC/verilated_threads.cpp" -o verilated_threads.o
 g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I. -I"$VERILATOR_INC" -c "$SCRIPT_DIR/arti_rtl_model.cpp" -o arti_rtl_model.o
