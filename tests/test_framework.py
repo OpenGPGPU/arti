@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from arti.cli import main
+from arti.config import load_config
 from arti.full_system import (
     _start_job,
     get_full_system_job,
@@ -30,6 +31,15 @@ CONFIG = ROOT / "examples/simple_gpio/config.yaml"
 
 
 class FrameworkTest(unittest.TestCase):
+    def test_empty_optional_display_register_does_not_capture_next_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.yaml"
+            config.write_text("display:\n  enabled: true\n"
+                              "  format_register: \n  refresh_hz: 30\n")
+            parsed = load_config(config)
+            self.assertIsNone(parsed.display_format_register)
+            self.assertEqual(parsed.display_refresh_hz, 30)
+
     def test_parse_and_infer_axi_lite(self):
         signature = parse_verilog(RTL, "simple_gpio")
         ports = {port.name: port for port in signature.ports}
@@ -132,7 +142,8 @@ class FrameworkTest(unittest.TestCase):
                 "  width: 16\n  height: 16\n  format: a8r8g8b8\n"
                 "  address_register: 0x44\n  stride_register: 0x48\n"
                 "  control_register: 0x58\n  width_register: 0x4c\n"
-                "  height_register: 0x50\n  refresh_hz: 60\n"
+                "  height_register: 0x50\n  format_register: 0x54\n"
+                "  refresh_hz: 60\n"
                 "  framebuffer_size: 0x400\n"
             )
             (Path(tmp) / "simple_gpio.v").write_text(RTL.read_text())
@@ -144,6 +155,9 @@ class FrameworkTest(unittest.TestCase):
             self.assertIn("ARTI_SCANOUT_CTRL_REG 0x58u", stub)
             self.assertIn("ARTI_SCANOUT_WIDTH_REG 0x4cu", stub)
             self.assertIn("ARTI_SCANOUT_HEIGHT_REG 0x50u", stub)
+            self.assertIn("ARTI_SCANOUT_FORMAT_REG 0x54u", stub)
+            self.assertIn("s->scanout_format = (uint32_t)value", stub)
+            self.assertIn("s->scanout_format == 1", stub)
             self.assertIn("ARTI_REFRESH_NS", stub)
             self.assertIn("s->scanout_enable", stub)
             self.assertIn("arti_refresh_timer", stub)
@@ -174,7 +188,8 @@ class FrameworkTest(unittest.TestCase):
             process = subprocess.Popen([str(output / "build/cmake/cosim"), str(socket_path)],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
             try:
-                for _ in range(100):
+                # SystemC startup can take over a second on a busy host.
+                for _ in range(500):
                     if socket_path.exists(): break
                     time.sleep(0.01)
                 with socket.socket(socket.AF_UNIX) as client:

@@ -79,6 +79,7 @@ display:
   control_register: ${ARTI_DISPLAY_CTRL_REG:-}
   width_register: ${ARTI_DISPLAY_WIDTH_REG:-}
   height_register: ${ARTI_DISPLAY_HEIGHT_REG:-}
+  format_register: ${ARTI_DISPLAY_FORMAT_REG:-}
   refresh_hz: ${ARTI_DISPLAY_REFRESH_HZ:-60}
 YAMLEOF
 fi

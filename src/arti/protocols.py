@@ -978,6 +978,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    uint32_t scanout_stride;")
         lines.append("    uint32_t scanout_width;")
         lines.append("    uint32_t scanout_height;")
+        lines.append("    uint32_t scanout_format;")
         lines.append("    bool scanout_enable;")
         if config.display_refresh_hz > 0:
             lines.append("    QEMUTimer *refresh_timer;")
@@ -1055,6 +1056,8 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
                 lines.append("#define ARTI_SCANOUT_WIDTH_REG 0x{:x}u".format(config.display_width_register))
             if config.display_height_register is not None:
                 lines.append("#define ARTI_SCANOUT_HEIGHT_REG 0x{:x}u".format(config.display_height_register))
+            if config.display_format_register is not None:
+                lines.append("#define ARTI_SCANOUT_FORMAT_REG 0x{:x}u".format(config.display_format_register))
             if config.display_refresh_hz > 0:
                 lines.append("#define ARTI_REFRESH_NS {}ull".format(
                     1000000000 // config.display_refresh_hz
@@ -1093,9 +1096,10 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
             lines.append("                               MEMTXATTRS_UNSPECIFIED, src, row_bytes) != MEMTX_OK)")
             lines.append("            return false;")
             lines.append("        dst = (uint32_t *)(surface_data(surface) + y * surface_stride(surface));")
-            lines.append("        /* OpenGPU stores DRM RGBA8888 as 0xRRGGBBAA; QEMU wants a8r8g8b8. */")
+            lines.append("        /* QEMU wants a8r8g8b8. RTL format 0 is RGBA, 1 is XRGB. */")
             lines.append("        for (unsigned x = 0; x < width; x++)")
-            lines.append("            dst[x] = (src[x] >> 8) | (src[x] << 24);")
+            lines.append("            dst[x] = s->scanout_format == 1 ?")
+            lines.append("                (src[x] | 0xff000000u) : ((src[x] >> 8) | (src[x] << 24));")
             lines.append("    }")
         else:
             lines.append("    if (surface_width(surface) != ARTI_FB_WIDTH ||")
@@ -1158,12 +1162,12 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
             lines.append("            return;")
             lines.append("        }")
             lines.append("        for (x = 0; x < width; x++) {")
-            lines.append("            /* Guest word is DRM RGBA8888 0xRRGGBBAA. */")
+            lines.append("            /* RTL format 0 is RGBA, 1 is XRGB. */")
             lines.append("            uint32_t px = src[x];")
             lines.append("            unsigned char rgb[3] = {")
-            lines.append("                (unsigned char)(px >> 24),")
-            lines.append("                (unsigned char)(px >> 16),")
-            lines.append("                (unsigned char)(px >> 8)")
+            lines.append("                (unsigned char)(px >> (s->scanout_format == 1 ? 16 : 24)),")
+            lines.append("                (unsigned char)(px >> (s->scanout_format == 1 ? 8 : 16)),")
+            lines.append("                (unsigned char)(px >> (s->scanout_format == 1 ? 0 : 8))")
             lines.append("            };")
             lines.append("            fwrite(rgb, 1, 3, fp);")
             lines.append("        }")
@@ -1234,6 +1238,10 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
             lines.append("    } else if (offset == ARTI_SCANOUT_HEIGHT_REG && size == 4) {")
             lines.append("        s->scanout_height = (uint32_t)value;")
             lines.append("        arti_scanout_sideband(s);")
+        if config.display_format_register is not None:
+            lines.append("    } else if (offset == ARTI_SCANOUT_FORMAT_REG && size == 4) {")
+            lines.append("        s->scanout_format = (uint32_t)value;")
+            lines.append("        arti_scanout_sideband(s);")
         lines.append("    }")
     elif has_irq and not has_display:
         lines.append("    ArtiRtlState *s = opaque;")
@@ -1261,6 +1269,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    s->scanout_stride = ARTI_FB_STRIDE;")
         lines.append("    s->scanout_width = ARTI_FB_WIDTH;")
         lines.append("    s->scanout_height = ARTI_FB_HEIGHT;")
+        lines.append("    s->scanout_format = 0;")
         # Without a control register, BASE writes alone enable scanout (legacy).
         lines.append("    s->scanout_enable = {};".format(
             "false" if config.display_control_register is not None else "true"

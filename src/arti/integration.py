@@ -128,6 +128,10 @@ def _shell_values(integration: Integration) -> dict[str, str]:
             hex(config.display_height_register)
             if config.display_height_register is not None else ""
         ),
+        "ARTI_DISPLAY_FORMAT_REG": (
+            hex(config.display_format_register)
+            if config.display_format_register is not None else ""
+        ),
         "ARTI_DISPLAY_REFRESH_HZ": str(config.display_refresh_hz),
         "DRIVER_KO": integration.driver_ko,
         "DRIVER_DEPS": integration.driver_deps,

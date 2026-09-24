@@ -304,10 +304,11 @@ def generate_project(config: Config, signature: ModuleSignature, inference: dict
         if config.display_source != "guest-memory" and (
             config.display_control_register is not None or
             config.display_width_register is not None or
-            config.display_height_register is not None
+            config.display_height_register is not None or
+            config.display_format_register is not None
         ):
             raise ValueError(
-                "display.control/width/height_register require source: guest-memory"
+                "display.control/width/height/format_register require source: guest-memory"
             )
     root = Path(output)
     if config.data_width < 8 or config.data_width > 64 or config.data_width % 8:

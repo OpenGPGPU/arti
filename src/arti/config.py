@@ -42,6 +42,7 @@ class Config:
     display_control_register: int | None = None
     display_width_register: int | None = None
     display_height_register: int | None = None
+    display_format_register: int | None = None
     # Guest-memory refresh pacing for QEMU GraphicHwOps (0 disables the timer).
     display_refresh_hz: int = 60
 
@@ -58,7 +59,7 @@ def load_config(path: str | Path) -> Config:
     display_match = re.search(r"^\s*display:\s*\n((?:\s+.*\n)*)", text, re.M)
     display_text = display_match.group(1) if display_match else ""
     def display_scalar(key: str, default=None):
-        match = re.search(rf"^\s*{re.escape(key)}:\s*([^#\n]+)", display_text, re.M)
+        match = re.search(rf"^[ \t]*{re.escape(key)}:[ \t]*([^#\n]*)", display_text, re.M)
         return match.group(1).strip().strip("'\"") if match else default
     return Config(
         project_name=scalar("name", "rtl_cosim"),
@@ -87,5 +88,6 @@ def load_config(path: str | Path) -> Config:
         display_control_register=_optional_reg(display_scalar("control_register")),
         display_width_register=_optional_reg(display_scalar("width_register")),
         display_height_register=_optional_reg(display_scalar("height_register")),
+        display_format_register=_optional_reg(display_scalar("format_register")),
         display_refresh_hz=int(display_scalar("refresh_hz", "60") or "60"),
     )

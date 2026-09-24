@@ -284,7 +284,7 @@ VERILATOR_INC=${{VERILATOR_INC:-/usr/share/verilator/include}}
 QEMU_SRC=${{QEMU_SRC:?must be set}}
 QEMU_BUILD=${{QEMU_BUILD:-/tmp/qemu-arti-build}}
 TOP_MODULE={mod}
-ARTI_VERILATOR_THREADS=${{ARTI_VERILATOR_THREADS:-1}}
+ARTI_VERILATOR_THREADS=${{ARTI_VERILATOR_THREADS:-8}}
 ARTI_VERILATOR_BUILD_JOBS=${{ARTI_VERILATOR_BUILD_JOBS:-4}}
 if (( ARTI_VERILATOR_THREADS < 1 || ARTI_VERILATOR_BUILD_JOBS < 1 )); then
     echo "Verilator thread and build job counts must be positive" >&2

@@ -103,13 +103,23 @@ for cand in \
 done
 [ -z "$USERSPACE_DIR" ] || echo "  userspace: $USERSPACE_DIR"
 OPENGPU_AUTO_DISPLAY="${OPENGPU_AUTO_DISPLAY:-0}"
-if [ "$OPENGPU_AUTO_DISPLAY" = "1" ]; then
-    [ -n "$DRIVER_KO" ] && [ -n "$USERSPACE_DIR" ] && \
-        [ -x "$USERSPACE_DIR/opengpu_kms_present" ] || {
-        echo "FAIL: OPENGPU_AUTO_DISPLAY needs the external driver and opengpu_kms_present" >&2
-        exit 1
-    }
-fi
+case "$OPENGPU_AUTO_DISPLAY" in
+    0) ;;
+    1|console)
+        [ -n "$DRIVER_KO" ] || {
+            echo "FAIL: OPENGPU_AUTO_DISPLAY needs the external driver" >&2
+            exit 1
+        }
+        ;;
+    gradient)
+        [ -n "$DRIVER_KO" ] && [ -n "$USERSPACE_DIR" ] && \
+            [ -x "$USERSPACE_DIR/opengpu_kms_present" ] || {
+            echo "FAIL: gradient display needs the external driver and opengpu_kms_present" >&2
+            exit 1
+        }
+        ;;
+    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1 or gradient" >&2; exit 1 ;;
+esac
 
 # --- Stage module files into a temp dir, then make label=OPENGPU ISO ----------
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/opengpu-mods.XXXXXX")"
@@ -119,7 +129,7 @@ trap cleanup EXIT
 cp "$KO" "$STAGE/arti_rtl_test.ko"
 [ "$GPU_REFERENCE" != "1" ] || cp "$GPU_KO" "$STAGE/arti_gpu_probe.ko"
 [ "$GPU_REFERENCE" != "1" ] || [ ! -f "$DRM_KO" ] || cp "$DRM_KO" "$STAGE/arti_gpu_drm.ko"
-[ -z "$DRIVER_KO" ] || cp "$DRIVER_KO" "$STAGE/arti_driver.ko"
+[ -z "$DRIVER_KO" ] || cp "$DRIVER_KO" "$STAGE/$(basename "$DRIVER_KO")"
 for path in "${SUPPORT_MODULES[@]+"${SUPPORT_MODULES[@]}"}"; do
     cp "$path" "$STAGE/$(basename "$path")"
 done
@@ -145,7 +155,7 @@ LOAD_ORDER=()
 for path in "${SUPPORT_MODULES[@]+"${SUPPORT_MODULES[@]}"}"; do
     LOAD_ORDER+=("$(basename "$path")")
 done
-[ -z "$DRIVER_KO" ] || LOAD_ORDER+=("arti_driver.ko")
+[ -z "$DRIVER_KO" ] || LOAD_ORDER+=("$(basename "$DRIVER_KO")")
 
 {
     echo '#!/bin/sh'
@@ -223,8 +233,16 @@ if [ "${CLOUDINIT_PACKAGES:-0}" = "1" ] || [ "${CLOUDINIT_PACKAGES:-0}" = "true"
     packages_yaml=$'packages:\n  - kmod\n  - build-essential\n  - git\n  - vim-tiny\n  - python3\n  - ca-certificates\n  - curl\n  - pciutils\n  - strace\n  - gdb\n'
 fi
 autoload_commands=""
-if [ "$OPENGPU_AUTO_DISPLAY" = "1" ]; then
-    autoload_commands=$'  - systemctl enable opengpu-boot-display.service\n  - systemctl start opengpu-boot-display.service\n'
+if [ "$OPENGPU_AUTO_DISPLAY" != "0" ]; then
+    autoload_commands=$'  - systemctl enable opengpu-boot-display.service\n  - systemctl restart opengpu-boot-display.service\n'
+else
+    autoload_commands=$'  - systemctl disable opengpu-boot-display.service || true\n'
+fi
+
+if [ "$OPENGPU_AUTO_DISPLAY" = "gradient" ]; then
+    display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_kms_present /dev/dri/card0'
+else
+    display_service=$'      Type=oneshot\n      RemainAfterExit=yes\n      ExecStart=/root/load_opengpu.sh'
 fi
 
 cat > "$CI_DIR/user-data" <<EOF
@@ -298,14 +316,12 @@ write_files:
     permissions: '0644'
     content: |
       [Unit]
-      Description=Load OpenGPU and present its KMS framebuffer
+      Description=Load OpenGPU and enable its display
       Requires=opengpu-sync.service
       After=opengpu-sync.service
 
       [Service]
-      Type=simple
-      ExecStartPre=/root/load_opengpu.sh
-      ExecStart=/root/opengpu_kms_present /dev/dri/card0
+${display_service}
 
       [Install]
       WantedBy=multi-user.target
@@ -313,10 +329,14 @@ runcmd:
   - sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
   - growpart /dev/vda 1 || true
   - resize2fs /dev/vda1 || true
+  # A service enabled by an earlier boot may already be running the gradient
+  # presenter. Stop it before replacing the unit with this instance's mode.
+  - systemctl stop opengpu-boot-display.service || true
+  - systemctl daemon-reload
   - systemctl enable arti-net.service
   - systemctl start arti-net.service
   - systemctl enable opengpu-sync.service
-  - systemctl start opengpu-sync.service
+  - systemctl restart opengpu-sync.service
 ${autoload_commands}
 EOF
 
@@ -336,7 +356,7 @@ xorriso -as mkisofs -V cidata -J -r -o "$OUTPUT" \
 echo "=== cloud-init ISO built: $OUTPUT ($(wc -c < "$OUTPUT") bytes) ==="
 echo "=== modules ISO built:    $MODULES_ISO ($(wc -c < "$MODULES_ISO") bytes) ==="
 echo "Guest: /root/load_opengpu.sh"
-if [ "$OPENGPU_AUTO_DISPLAY" = "1" ]; then
+if [ "$OPENGPU_AUTO_DISPLAY" != "0" ]; then
     echo "       opengpu-boot-display.service enabled at boot"
 fi
 echo "       /root/load_opengpu.sh test"
