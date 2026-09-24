@@ -273,8 +273,8 @@ display:
 
 For a GPU that renders into driver-allocated guest RAM, select the dynamic
 scanout source instead of the fixed MMIO VRAM aperture. ARTI watches the GPU's
-framebuffer-address and stride registers, then reads that guest physical memory
-into the QEMU display surface:
+framebuffer-address, stride, optional enable/width/height registers, then reads
+that guest physical memory into the QEMU display surface on each refresh:
 
 ```yaml
 display:
@@ -283,10 +283,25 @@ display:
   width: 16
   height: 16
   format: a8r8g8b8
-  address_register: 0x18
-  stride_register: 0x20
+  address_register: 0x44
+  stride_register: 0x48
+  control_register: 0x58   # bit0 enable; omit to enable on BASE alone
+  width_register: 0x4c     # optional; clamped to width/height above
+  height_register: 0x50
+  refresh_hz: 60           # 0 disables the host refresh timer
   framebuffer_size: 0x400
 ```
+
+`control_register` gates presentation: scanout is idle until bit0 is set and
+`address_register` is non-zero. Width/height register writes resize the QEMU
+console up to the compile-time `width`/`height` ceiling. `refresh_hz` keeps the
+surface live when the guest paints the current framebuffer without rewriting
+BASE (use 0 under FlashSim DRM tests; 60 for interactive windows). RGBA8888
+guest words (`0xRRGGBBAA`) are converted to QEMU `a8r8g8b8`.
+
+Set `ARTI_DISPLAY_DUMP=/path/to/scanout.ppm` in the QEMU environment to write a
+one-shot P6 PPM of the first enabled guest-memory scanout (headless present
+check). OpenGPU wires this through `scripts/run_arti_display.sh`.
 
 This mode does not create a `simple-framebuffer` DT node because the scanout
 buffer is allocated dynamically by the bound GPU driver. To render the driver

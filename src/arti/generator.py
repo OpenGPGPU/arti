@@ -299,6 +299,16 @@ def generate_project(config: Config, signature: ModuleSignature, inference: dict
             raise ValueError("display.format currently supports only a8r8g8b8")
         if config.display_framebuffer_size < config.display_width * config.display_height * 4:
             raise ValueError("display.framebuffer_size is too small for width/height")
+        if config.display_source == "guest-memory" and config.display_refresh_hz < 0:
+            raise ValueError("display.refresh_hz must be >= 0")
+        if config.display_source != "guest-memory" and (
+            config.display_control_register is not None or
+            config.display_width_register is not None or
+            config.display_height_register is not None
+        ):
+            raise ValueError(
+                "display.control/width/height_register require source: guest-memory"
+            )
     root = Path(output)
     if config.data_width < 8 or config.data_width > 64 or config.data_width % 8:
         raise ValueError("bridge.data_width must be a byte-aligned value between 8 and 64")

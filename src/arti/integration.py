@@ -116,6 +116,19 @@ def _shell_values(integration: Integration) -> dict[str, str]:
         "ARTI_DISPLAY_FB_SIZE": hex(config.display_framebuffer_size),
         "ARTI_DISPLAY_ADDR_REG": hex(config.display_address_register),
         "ARTI_DISPLAY_STRIDE_REG": hex(config.display_stride_register),
+        "ARTI_DISPLAY_CTRL_REG": (
+            hex(config.display_control_register)
+            if config.display_control_register is not None else ""
+        ),
+        "ARTI_DISPLAY_WIDTH_REG": (
+            hex(config.display_width_register)
+            if config.display_width_register is not None else ""
+        ),
+        "ARTI_DISPLAY_HEIGHT_REG": (
+            hex(config.display_height_register)
+            if config.display_height_register is not None else ""
+        ),
+        "ARTI_DISPLAY_REFRESH_HZ": str(config.display_refresh_hz),
         "DRIVER_KO": integration.driver_ko,
         "DRIVER_DEPS": integration.driver_deps,
         "DRIVER_MANIFEST": integration.driver_manifest,

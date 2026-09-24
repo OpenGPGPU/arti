@@ -284,6 +284,12 @@ VERILATOR_INC=${{VERILATOR_INC:-/usr/share/verilator/include}}
 QEMU_SRC=${{QEMU_SRC:?must be set}}
 QEMU_BUILD=${{QEMU_BUILD:-/tmp/qemu-arti-build}}
 TOP_MODULE={mod}
+ARTI_VERILATOR_THREADS=${{ARTI_VERILATOR_THREADS:-1}}
+ARTI_VERILATOR_BUILD_JOBS=${{ARTI_VERILATOR_BUILD_JOBS:-4}}
+if (( ARTI_VERILATOR_THREADS < 1 || ARTI_VERILATOR_BUILD_JOBS < 1 )); then
+    echo "Verilator thread and build job counts must be positive" >&2
+    exit 1
+fi
 
 echo "=== Building embedded RTL model for {mod} ({protocol}) ==="
 mkdir -p "$SCRIPT_DIR/verilated"
@@ -296,14 +302,27 @@ if (( ${{#RTL_SOURCES[@]}} == 0 )); then
     exit 1
 fi
 verilator --cc --Mdir "$SCRIPT_DIR/verilated" \
+  --threads "$ARTI_VERILATOR_THREADS" \
   --CFLAGS "-Wno-undefined-bool-conversion" \
   "${{RTL_SOURCES[@]}}" --top-module "$TOP_MODULE"
 
 # 2. Compile all sources into a static library
 cd "$SCRIPT_DIR/verilated"
+compile_model() {{
+    local src="$1"
+    g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I. -I"$VERILATOR_INC" \
+        -c "$src" -o "${{src%.cpp}}.o"
+}}
+pids=()
 for f in V{mod}*.cpp; do
-    g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I. -I"$VERILATOR_INC" -c "$f" -o "${{f%.cpp}}.o"
+    compile_model "$f" &
+    pids+=("$!")
+    if (( ${{#pids[@]}} >= ARTI_VERILATOR_BUILD_JOBS )); then
+        for pid in "${{pids[@]}}"; do wait "$pid"; done
+        pids=()
+    fi
 done
+for pid in "${{pids[@]}}"; do wait "$pid"; done
 g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I"$VERILATOR_INC" -c "$VERILATOR_INC/verilated.cpp" -o verilated.o
 g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I"$VERILATOR_INC" -c "$VERILATOR_INC/verilated_threads.cpp" -o verilated_threads.o
 g++ -std=gnu++17 -fPIC -fPIE -O2 -w -I. -I"$VERILATOR_INC" -c "$SCRIPT_DIR/arti_rtl_model.cpp" -o arti_rtl_model.o

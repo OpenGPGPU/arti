@@ -938,7 +938,7 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     has_mmio_vram = bool(has_display and not has_guest_scanout)
 
     lines = []
-    lines.append("/* arti-qemu-stub-v4 */")
+    lines.append("/* arti-qemu-stub-v5 */")
     lines.append('#include "qemu/osdep.h"')
     lines.append('#include "hw/core/sysbus.h"')
     lines.append('#include "qapi/error.h"')
@@ -947,10 +947,13 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append('#include "system/address-spaces.h"')
     if has_display:
         lines.append('#include "ui/console.h"')
+        lines.append('#include "qemu/error-report.h"')
+        lines.append("#include <stdio.h>")
 
     lines.append('#include "qemu/thread.h"')
-    if has_irq:
+    if has_irq or (has_guest_scanout and config.display_refresh_hz > 0):
         lines.append('#include "qemu/timer.h"')
+    if has_irq:
         lines.append('#include "hw/core/irq.h"')
 
     lines.append("")
@@ -973,6 +976,11 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     if has_guest_scanout:
         lines.append("    uint64_t scanout_addr;")
         lines.append("    uint32_t scanout_stride;")
+        lines.append("    uint32_t scanout_width;")
+        lines.append("    uint32_t scanout_height;")
+        lines.append("    bool scanout_enable;")
+        if config.display_refresh_hz > 0:
+            lines.append("    QEMUTimer *refresh_timer;")
     lines.append("};")
     lines.append("")
 
@@ -1041,6 +1049,16 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         if has_guest_scanout:
             lines.append("#define ARTI_SCANOUT_ADDR_REG 0x{:x}u".format(config.display_address_register))
             lines.append("#define ARTI_SCANOUT_STRIDE_REG 0x{:x}u".format(config.display_stride_register))
+            if config.display_control_register is not None:
+                lines.append("#define ARTI_SCANOUT_CTRL_REG 0x{:x}u".format(config.display_control_register))
+            if config.display_width_register is not None:
+                lines.append("#define ARTI_SCANOUT_WIDTH_REG 0x{:x}u".format(config.display_width_register))
+            if config.display_height_register is not None:
+                lines.append("#define ARTI_SCANOUT_HEIGHT_REG 0x{:x}u".format(config.display_height_register))
+            if config.display_refresh_hz > 0:
+                lines.append("#define ARTI_REFRESH_NS {}ull".format(
+                    1000000000 // config.display_refresh_hz
+                ))
         lines.append("")
         lines.append("static void arti_gfx_invalidate(void *opaque)")
         lines.append("{")
@@ -1054,24 +1072,37 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    DisplaySurface *surface = qemu_console_surface(s->con);")
         lines.append("    unsigned y;")
         lines.append("")
-        lines.append("    if (surface_width(surface) != ARTI_FB_WIDTH ||")
-        lines.append("        surface_height(surface) != ARTI_FB_HEIGHT) {")
-        lines.append("        qemu_console_resize(s->con, ARTI_FB_WIDTH, ARTI_FB_HEIGHT);")
-        lines.append("        surface = qemu_console_surface(s->con);")
-        lines.append("    }")
         if has_guest_scanout:
-            lines.append("    if (!s->scanout_addr) return false;")
+            lines.append("    unsigned width = s->scanout_width ? s->scanout_width : ARTI_FB_WIDTH;")
+            lines.append("    unsigned height = s->scanout_height ? s->scanout_height : ARTI_FB_HEIGHT;")
+            lines.append("    if (width > ARTI_FB_WIDTH) width = ARTI_FB_WIDTH;")
+            lines.append("    if (height > ARTI_FB_HEIGHT) height = ARTI_FB_HEIGHT;")
+            lines.append("    if (!s->scanout_enable || !s->scanout_addr || !width || !height)")
+            lines.append("        return false;")
+            lines.append("    if (surface_width(surface) != width ||")
+            lines.append("        surface_height(surface) != height) {")
+            lines.append("        qemu_console_resize(s->con, width, height);")
+            lines.append("        surface = qemu_console_surface(s->con);")
+            lines.append("    }")
             lines.append("    uint32_t *dst;")
             lines.append("    uint32_t src[ARTI_FB_WIDTH];")
-            lines.append("    unsigned stride = s->scanout_stride ? s->scanout_stride : ARTI_FB_STRIDE;")
-            lines.append("    for (y = 0; y < ARTI_FB_HEIGHT; y++) {")
+            lines.append("    unsigned stride = s->scanout_stride ? s->scanout_stride : (width * 4u);")
+            lines.append("    unsigned row_bytes = width * 4u;")
+            lines.append("    for (y = 0; y < height; y++) {")
             lines.append("        if (address_space_read(&address_space_memory, s->scanout_addr + y * stride,")
-            lines.append("                               MEMTXATTRS_UNSPECIFIED, src, ARTI_FB_STRIDE) != MEMTX_OK)")
+            lines.append("                               MEMTXATTRS_UNSPECIFIED, src, row_bytes) != MEMTX_OK)")
             lines.append("            return false;")
             lines.append("        dst = (uint32_t *)(surface_data(surface) + y * surface_stride(surface));")
-            lines.append("        for (unsigned x = 0; x < ARTI_FB_WIDTH; x++) dst[x] = src[x] >> 8;")
+            lines.append("        /* OpenGPU stores DRM RGBA8888 as 0xRRGGBBAA; QEMU wants a8r8g8b8. */")
+            lines.append("        for (unsigned x = 0; x < width; x++)")
+            lines.append("            dst[x] = (src[x] >> 8) | (src[x] << 24);")
             lines.append("    }")
         else:
+            lines.append("    if (surface_width(surface) != ARTI_FB_WIDTH ||")
+            lines.append("        surface_height(surface) != ARTI_FB_HEIGHT) {")
+            lines.append("        qemu_console_resize(s->con, ARTI_FB_WIDTH, ARTI_FB_HEIGHT);")
+            lines.append("        surface = qemu_console_surface(s->con);")
+            lines.append("    }")
             lines.append("    for (y = 0; y < ARTI_FB_HEIGHT; y++) {")
             lines.append("        memcpy(surface_data(surface) + y * surface_stride(surface),")
             lines.append("               s->vram + y * ARTI_FB_STRIDE, ARTI_FB_STRIDE);")
@@ -1081,11 +1112,74 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    return true;")
         lines.append("}")
         lines.append("")
+        if has_guest_scanout and config.display_refresh_hz > 0:
+            lines.append("static void arti_refresh_timer(void *opaque)")
+            lines.append("{")
+            lines.append("    ArtiRtlState *s = opaque;")
+            lines.append("    s->invalidate = true;")
+            lines.append("    qemu_console_hw_update(s->con);")
+            lines.append("    timer_mod(s->refresh_timer,")
+            lines.append("              qemu_clock_get_ns(QEMU_CLOCK_HOST) + ARTI_REFRESH_NS);")
+            lines.append("}")
+            lines.append("")
         lines.append("static const GraphicHwOps arti_gfx_ops = {")
         lines.append("    .invalidate = arti_gfx_invalidate,")
         lines.append("    .gfx_update = arti_gfx_update,")
         lines.append("};")
         lines.append("")
+        if has_guest_scanout:
+            lines.append("/* One-shot PPM dump of guest scanout when ARTI_DISPLAY_DUMP is set.")
+            lines.append(" * Lets headless runs verify present without a QEMU window. */")
+            lines.append("static void arti_dump_scanout_ppm(ArtiRtlState *s)")
+            lines.append("{")
+            lines.append("    const char *path = getenv(\"ARTI_DISPLAY_DUMP\");")
+            lines.append("    unsigned width = s->scanout_width ? s->scanout_width : ARTI_FB_WIDTH;")
+            lines.append("    unsigned height = s->scanout_height ? s->scanout_height : ARTI_FB_HEIGHT;")
+            lines.append("    unsigned stride = s->scanout_stride ? s->scanout_stride : (width * 4u);")
+            lines.append("    unsigned y, x;")
+            lines.append("    uint32_t src[ARTI_FB_WIDTH];")
+            lines.append("    FILE *fp;")
+            lines.append("    static bool dumped;")
+            lines.append("")
+            lines.append("    if (dumped || !path || !path[0]) return;")
+            lines.append("    if (!s->scanout_enable || !s->scanout_addr || !width || !height) return;")
+            lines.append("    if (width > ARTI_FB_WIDTH) width = ARTI_FB_WIDTH;")
+            lines.append("    if (height > ARTI_FB_HEIGHT) height = ARTI_FB_HEIGHT;")
+            lines.append("    fp = fopen(path, \"wb\");")
+            lines.append("    if (!fp) return;")
+            lines.append("    fprintf(fp, \"P6\\n%u %u\\n255\\n\", width, height);")
+            lines.append("    for (y = 0; y < height; y++) {")
+            lines.append("        if (address_space_read(&address_space_memory,")
+            lines.append("                               s->scanout_addr + y * stride,")
+            lines.append("                               MEMTXATTRS_UNSPECIFIED, src,")
+            lines.append("                               width * 4u) != MEMTX_OK) {")
+            lines.append("            fclose(fp);")
+            lines.append("            unlink(path);")
+            lines.append("            return;")
+            lines.append("        }")
+            lines.append("        for (x = 0; x < width; x++) {")
+            lines.append("            /* Guest word is DRM RGBA8888 0xRRGGBBAA. */")
+            lines.append("            uint32_t px = src[x];")
+            lines.append("            unsigned char rgb[3] = {")
+            lines.append("                (unsigned char)(px >> 24),")
+            lines.append("                (unsigned char)(px >> 16),")
+            lines.append("                (unsigned char)(px >> 8)")
+            lines.append("            };")
+            lines.append("            fwrite(rgb, 1, 3, fp);")
+            lines.append("        }")
+            lines.append("    }")
+            lines.append("    fclose(fp);")
+            lines.append("    dumped = true;")
+            lines.append("    warn_report(\"ARTI DISPLAY DUMP PASS: wrote %s (%ux%u)\",")
+            lines.append("                path, width, height);")
+            lines.append("}")
+            lines.append("")
+            lines.append("static void arti_scanout_sideband(ArtiRtlState *s)")
+            lines.append("{")
+            lines.append("    s->invalidate = true;")
+            lines.append("    arti_dump_scanout_ppm(s);")
+            lines.append("}")
+            lines.append("")
 
     lines.append("static uint64_t arti_read(void *opaque, hwaddr offset, unsigned size)")
     lines.append("{")
@@ -1124,10 +1218,22 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     if has_guest_scanout:
         lines.append("    if (offset == ARTI_SCANOUT_ADDR_REG && size == 4) {")
         lines.append("        s->scanout_addr = (uint32_t)value;")
-        lines.append("        s->invalidate = true;")
+        lines.append("        arti_scanout_sideband(s);")
         lines.append("    } else if (offset == ARTI_SCANOUT_STRIDE_REG && size == 4) {")
         lines.append("        s->scanout_stride = (uint32_t)value;")
-        lines.append("        s->invalidate = true;")
+        lines.append("        arti_scanout_sideband(s);")
+        if config.display_control_register is not None:
+            lines.append("    } else if (offset == ARTI_SCANOUT_CTRL_REG && size == 4) {")
+            lines.append("        s->scanout_enable = !!(value & 1u);")
+            lines.append("        arti_scanout_sideband(s);")
+        if config.display_width_register is not None:
+            lines.append("    } else if (offset == ARTI_SCANOUT_WIDTH_REG && size == 4) {")
+            lines.append("        s->scanout_width = (uint32_t)value;")
+            lines.append("        arti_scanout_sideband(s);")
+        if config.display_height_register is not None:
+            lines.append("    } else if (offset == ARTI_SCANOUT_HEIGHT_REG && size == 4) {")
+            lines.append("        s->scanout_height = (uint32_t)value;")
+            lines.append("        arti_scanout_sideband(s);")
         lines.append("    }")
     elif has_irq and not has_display:
         lines.append("    ArtiRtlState *s = opaque;")
@@ -1153,6 +1259,12 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     if has_guest_scanout:
         lines.append("    s->scanout_addr = 0;")
         lines.append("    s->scanout_stride = ARTI_FB_STRIDE;")
+        lines.append("    s->scanout_width = ARTI_FB_WIDTH;")
+        lines.append("    s->scanout_height = ARTI_FB_HEIGHT;")
+        # Without a control register, BASE writes alone enable scanout (legacy).
+        lines.append("    s->scanout_enable = {};".format(
+            "false" if config.display_control_register is not None else "true"
+        ))
     lines.append("    memory_region_init_io(&s->mmio, OBJECT(s), &arti_ops, s,")
     if has_mmio_vram:
         lines.append("                          TYPE_ARTI_RTL, ARTI_MMIO_EXTENT);")
@@ -1168,6 +1280,11 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     lines.append("    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->mmio);")
     if has_display:
         lines.append("    s->con = qemu_graphic_console_create(dev, 0, &arti_gfx_ops, s);")
+        if has_guest_scanout and config.display_refresh_hz > 0:
+            lines.append("    s->refresh_timer = timer_new_ns(QEMU_CLOCK_HOST,")
+            lines.append("                                   arti_refresh_timer, s);")
+            lines.append("    timer_mod(s->refresh_timer,")
+            lines.append("              qemu_clock_get_ns(QEMU_CLOCK_HOST) + ARTI_REFRESH_NS);")
     lines.append("}")
     if has_mmio_vram:
         lines.append("static void arti_unrealize(DeviceState *dev)")

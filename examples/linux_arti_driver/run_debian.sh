@@ -54,12 +54,13 @@ fi
 # Auto-build cloud-init + modules ISO if missing/stale.
 if [ ! -f "$CIDATA" ] || [ ! -f "$MODULES_ISO" ] || \
    { [ -f "$SCRIPT_DIR/arti_rtl_test.ko" ] && [ "$SCRIPT_DIR/arti_rtl_test.ko" -nt "$CIDATA" ]; } || \
-   [ "$GPU_REFERENCE" = "1" ] || [ -n "$DRIVER_KO" ] || \
+   [ "$GPU_REFERENCE" = "1" ] || \
    { [ -n "$DRIVER_KO" ] && [ -f "$DRIVER_KO" ] && \
      { [ "$DRIVER_KO" -nt "$CIDATA" ] || [ "$DRIVER_KO" -nt "$MODULES_ISO" ]; }; }; then
     echo "  cloud-init / modules ISO missing or stale, building..."
     GPU_REFERENCE="$GPU_REFERENCE" DRIVER_KO="$DRIVER_KO" \
     DRIVER_MANIFEST="${DRIVER_MANIFEST:-}" \
+    OPENGPU_AUTO_DISPLAY="${OPENGPU_AUTO_DISPLAY:-0}" \
     OUTPUT="$CIDATA" MODULES_ISO="$MODULES_ISO" \
         bash "$SCRIPT_DIR/build_cloudinit.sh" || { echo "FAIL: cannot build cloud-init ISO"; exit 1; }
 fi
@@ -79,11 +80,15 @@ echo "  Disk    : $DISK (persistent)"
 echo "  Kernel  : $KERNEL"
 echo "  Modules : $MODULES_ISO"
 echo "  Device  : embedded RTL model (FlashSim if that QEMU was linked)"
-echo "  Display : $QEMU_DISPLAY (serial console is primary; window may be tiny)"
+echo "  Display : $QEMU_DISPLAY (serial console for login; GPU mode may be tiny)"
 echo "  Login   : root (password: arti)"
 echo "  Network : user-mode (SLIRP) - apt/DNS via 10.0.2.2"
 echo "  SSH     : ssh root@localhost -p $SSH_PORT"
-echo "  GPU     : after boot run  /root/load_opengpu.sh  or  /root/load_opengpu.sh test"
+if [ "${OPENGPU_AUTO_DISPLAY:-0}" = "1" ]; then
+    echo "  GPU     : OpenGPU loads and presents a KMS frame at boot"
+else
+    echo "  GPU     : after boot run /root/load_opengpu.sh or /root/load_opengpu.sh test"
+fi
 echo "  Exit    : poweroff -f  or  Ctrl+A then X"
 echo ""
 

@@ -3,6 +3,15 @@ from pathlib import Path
 import re
 
 
+def _optional_reg(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text or text.lower() in ("none", "null", "~"):
+        return None
+    return int(text.replace("_", ""), 0)
+
+
 @dataclass
 class Config:
     project_name: str = "rtl_cosim"
@@ -29,6 +38,12 @@ class Config:
     display_framebuffer_size: int = 0x800000
     display_address_register: int = 0x18
     display_stride_register: int = 0x20
+    # Optional guest-memory scanout sidebands. None means "not watched".
+    display_control_register: int | None = None
+    display_width_register: int | None = None
+    display_height_register: int | None = None
+    # Guest-memory refresh pacing for QEMU GraphicHwOps (0 disables the timer).
+    display_refresh_hz: int = 60
 
 
 def load_config(path: str | Path) -> Config:
@@ -69,4 +84,8 @@ def load_config(path: str | Path) -> Config:
         display_framebuffer_size=int(display_scalar("framebuffer_size", "0x800000").replace("_", ""), 0),
         display_address_register=int(display_scalar("address_register", "0x18").replace("_", ""), 0),
         display_stride_register=int(display_scalar("stride_register", "0x20").replace("_", ""), 0),
+        display_control_register=_optional_reg(display_scalar("control_register")),
+        display_width_register=_optional_reg(display_scalar("width_register")),
+        display_height_register=_optional_reg(display_scalar("height_register")),
+        display_refresh_hz=int(display_scalar("refresh_hz", "60") or "60"),
     )

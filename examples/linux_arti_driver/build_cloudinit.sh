@@ -102,6 +102,14 @@ for cand in \
     fi
 done
 [ -z "$USERSPACE_DIR" ] || echo "  userspace: $USERSPACE_DIR"
+OPENGPU_AUTO_DISPLAY="${OPENGPU_AUTO_DISPLAY:-0}"
+if [ "$OPENGPU_AUTO_DISPLAY" = "1" ]; then
+    [ -n "$DRIVER_KO" ] && [ -n "$USERSPACE_DIR" ] && \
+        [ -x "$USERSPACE_DIR/opengpu_kms_present" ] || {
+        echo "FAIL: OPENGPU_AUTO_DISPLAY needs the external driver and opengpu_kms_present" >&2
+        exit 1
+    }
+fi
 
 # --- Stage module files into a temp dir, then make label=OPENGPU ISO ----------
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/opengpu-mods.XXXXXX")"
@@ -117,13 +125,15 @@ for path in "${SUPPORT_MODULES[@]+"${SUPPORT_MODULES[@]}"}"; do
 done
 [ -z "$DRM_TEST" ] || cp "$DRM_TEST" "$STAGE/opengpu_drm_test"
 if [ -n "$USERSPACE_DIR" ]; then
-    for name in opengpu_compute_example opengpu_triangle_example \
+    for name in opengpu_kms_present \
+                opengpu_compute_example opengpu_triangle_example \
                 opengpu_compute_shader.bin \
                 opengpu_fragment_tint opengpu_fragment_tint.bin \
                 opengpu_pipe_clear_draw opengpu_pipe_compute \
                 opengpu_pipe_blit opengpu_pipe_strided_blit \
                 opengpu_pipe_resolve opengpu_pipe_texture_draw \
-                opengpu_pipe_depth_pass opengpu_pipe_vertex_draw; do
+                opengpu_pipe_depth_pass opengpu_pipe_msaa_draw \
+                opengpu_pipe_vertex_draw; do
         path="$USERSPACE_DIR/$name"
         [ -f "$path" ] || continue
         cp "$path" "$STAGE/$name"
@@ -191,6 +201,7 @@ if [ "${1:-}" = "examples" ]; then
     run_one /root/opengpu_pipe_resolve "$CARD"
     run_one /root/opengpu_pipe_texture_draw "$CARD"
     run_one /root/opengpu_pipe_depth_pass "$CARD"
+    run_one /root/opengpu_pipe_msaa_draw "$CARD"
     run_one /root/opengpu_pipe_vertex_draw "$CARD"
   fi
   echo "OPENGPU USERSPACE EXAMPLES PASS"
@@ -210,6 +221,10 @@ echo "  wrote $MODULES_ISO ($(wc -c < "$MODULES_ISO") bytes)"
 packages_yaml=""
 if [ "${CLOUDINIT_PACKAGES:-0}" = "1" ] || [ "${CLOUDINIT_PACKAGES:-0}" = "true" ]; then
     packages_yaml=$'packages:\n  - kmod\n  - build-essential\n  - git\n  - vim-tiny\n  - python3\n  - ca-certificates\n  - curl\n  - pciutils\n  - strace\n  - gdb\n'
+fi
+autoload_commands=""
+if [ "$OPENGPU_AUTO_DISPLAY" = "1" ]; then
+    autoload_commands=$'  - systemctl enable opengpu-boot-display.service\n  - systemctl start opengpu-boot-display.service\n'
 fi
 
 cat > "$CI_DIR/user-data" <<EOF
@@ -279,6 +294,21 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/systemd/system/opengpu-boot-display.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Load OpenGPU and present its KMS framebuffer
+      Requires=opengpu-sync.service
+      After=opengpu-sync.service
+
+      [Service]
+      Type=simple
+      ExecStartPre=/root/load_opengpu.sh
+      ExecStart=/root/opengpu_kms_present /dev/dri/card0
+
+      [Install]
+      WantedBy=multi-user.target
 runcmd:
   - sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
   - growpart /dev/vda 1 || true
@@ -287,6 +317,7 @@ runcmd:
   - systemctl start arti-net.service
   - systemctl enable opengpu-sync.service
   - systemctl start opengpu-sync.service
+${autoload_commands}
 EOF
 
 # New instance-id so existing disks pick up the tiny oneshot (cidata is small,
@@ -305,5 +336,8 @@ xorriso -as mkisofs -V cidata -J -r -o "$OUTPUT" \
 echo "=== cloud-init ISO built: $OUTPUT ($(wc -c < "$OUTPUT") bytes) ==="
 echo "=== modules ISO built:    $MODULES_ISO ($(wc -c < "$MODULES_ISO") bytes) ==="
 echo "Guest: /root/load_opengpu.sh"
+if [ "$OPENGPU_AUTO_DISPLAY" = "1" ]; then
+    echo "       opengpu-boot-display.service enabled at boot"
+fi
 echo "       /root/load_opengpu.sh test"
 echo "       /root/load_opengpu.sh examples"

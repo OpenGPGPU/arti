@@ -71,8 +71,15 @@ display:
   width: ${ARTI_DISPLAY_WIDTH:-1024}
   height: ${ARTI_DISPLAY_HEIGHT:-768}
   format: ${ARTI_DISPLAY_FORMAT:-a8r8g8b8}
+  source: ${ARTI_DISPLAY_SOURCE:-mmio-vram}
   framebuffer_offset: ${ARTI_DISPLAY_FB_OFFSET:-0x100000}
   framebuffer_size: ${ARTI_DISPLAY_FB_SIZE:-0x800000}
+  address_register: ${ARTI_DISPLAY_ADDR_REG:-0x18}
+  stride_register: ${ARTI_DISPLAY_STRIDE_REG:-0x20}
+  control_register: ${ARTI_DISPLAY_CTRL_REG:-}
+  width_register: ${ARTI_DISPLAY_WIDTH_REG:-}
+  height_register: ${ARTI_DISPLAY_HEIGHT_REG:-}
+  refresh_hz: ${ARTI_DISPLAY_REFRESH_HZ:-60}
 YAMLEOF
 fi
 

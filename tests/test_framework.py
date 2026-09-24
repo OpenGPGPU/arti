@@ -130,18 +130,30 @@ class FrameworkTest(unittest.TestCase):
                 "  data_width: 32\n"
                 "display:\n  enabled: true\n  source: guest-memory\n"
                 "  width: 16\n  height: 16\n  format: a8r8g8b8\n"
-                "  address_register: 0x18\n  stride_register: 0x20\n"
+                "  address_register: 0x44\n  stride_register: 0x48\n"
+                "  control_register: 0x58\n  width_register: 0x4c\n"
+                "  height_register: 0x50\n  refresh_hz: 60\n"
                 "  framebuffer_size: 0x400\n"
             )
             (Path(tmp) / "simple_gpio.v").write_text(RTL.read_text())
             output = Path(tmp) / "generated"
             self.assertEqual(main(["generate", str(config), "--output", str(output)]), 0)
             stub = (output / "qemu/arti-rtl.c").read_text()
-            self.assertIn("ARTI_SCANOUT_ADDR_REG 0x18u", stub)
-            self.assertIn("ARTI_SCANOUT_STRIDE_REG 0x20u", stub)
+            self.assertIn("ARTI_SCANOUT_ADDR_REG 0x44u", stub)
+            self.assertIn("ARTI_SCANOUT_STRIDE_REG 0x48u", stub)
+            self.assertIn("ARTI_SCANOUT_CTRL_REG 0x58u", stub)
+            self.assertIn("ARTI_SCANOUT_WIDTH_REG 0x4cu", stub)
+            self.assertIn("ARTI_SCANOUT_HEIGHT_REG 0x50u", stub)
+            self.assertIn("ARTI_REFRESH_NS", stub)
+            self.assertIn("s->scanout_enable", stub)
+            self.assertIn("arti_refresh_timer", stub)
+            self.assertIn("qemu_console_hw_update", stub)
+            self.assertIn("arti_dump_scanout_ppm", stub)
+            self.assertIn("ARTI_DISPLAY_DUMP", stub)
             self.assertIn("s->scanout_addr", stub)
             self.assertIn("address_space_read(&address_space_memory", stub)
             self.assertNotIn("s->vram", stub)
+            self.assertIn("arti-qemu-stub-v5", stub)
 
 
     @unittest.skipUnless(shutil.which("verilator") and shutil.which("pkg-config"),

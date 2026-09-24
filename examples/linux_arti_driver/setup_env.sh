@@ -768,6 +768,10 @@ display:
   framebuffer_size: ${ARTI_DISPLAY_FB_SIZE:-0x800000}
   address_register: ${ARTI_DISPLAY_ADDR_REG:-0x18}
   stride_register: ${ARTI_DISPLAY_STRIDE_REG:-0x20}
+  control_register: ${ARTI_DISPLAY_CTRL_REG:-}
+  width_register: ${ARTI_DISPLAY_WIDTH_REG:-}
+  height_register: ${ARTI_DISPLAY_HEIGHT_REG:-}
+  refresh_hz: ${ARTI_DISPLAY_REFRESH_HZ:-60}
 YAMLEOF
 
 CONFIG_STAMP="$GEN_DIR/generated/.config.stamp"
