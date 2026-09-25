@@ -708,7 +708,17 @@ def render_axi4_model(config, signature, mapping, port_by_name, interrupts):
     lines.append("    }")
     lines.append("    idle();")
     lines.append("    g_rtl->eval();")
-    lines.append("    arti_model_settle();")
+    if config.display_enabled and config.display_source == "guest-memory":
+        # KMS publishes SCANOUT_BASE after its render fence retires. The AXI
+        # write already clocked the register, so a long generic settle only
+        # adds unrelated GPU cycles to this display-only transaction.
+        lines.append("    if (addr == 0x{:x}u) {{".format(config.display_address_register))
+        lines.append("        for (unsigned i = 0; i < 16; i++) tick();")
+        lines.append("    } else {")
+        lines.append("        arti_model_settle();")
+        lines.append("    }")
+    else:
+        lines.append("    arti_model_settle();")
     lines.append("    return 0;")
     lines.append("}")
     lines.append("")
