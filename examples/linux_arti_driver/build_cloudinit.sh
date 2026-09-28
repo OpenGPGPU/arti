@@ -147,6 +147,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_compute_example opengpu_triangle_example \
                 opengpu_compute_shader.bin \
                 opengpu_fragment_tint opengpu_fragment_tint.bin \
+                opengpu_fragment_fp_scalar opengpu_fragment_fp_scalar.bin \
                 opengpu_pipe_clear_draw opengpu_pipe_compute \
                 opengpu_pipe_blit opengpu_pipe_strided_blit \
                 opengpu_pipe_resolve opengpu_pipe_texture_draw \
@@ -206,6 +207,10 @@ if [ "${1:-}" = "examples" ]; then
   TINT=/root/opengpu_fragment_tint.bin
   if [ -x /root/opengpu_fragment_tint ]; then
     run_one /root/opengpu_fragment_tint "$CARD" "$TINT"
+    # Needs the scalar FPU on the fragment shader CU; the binary skips with
+    # success when OPENGPU_CAP_COMPUTE_SCALAR_FPU is absent.
+    run_one /root/opengpu_fragment_fp_scalar "$CARD" \
+        /root/opengpu_fragment_fp_scalar.bin
     run_one /root/opengpu_triangle_present "$CARD" "$TINT"
     run_one /root/opengpu_pipe_present "$CARD" "$TINT"
     run_one /root/opengpu_pipe_clear_draw "$CARD" "$TINT"
