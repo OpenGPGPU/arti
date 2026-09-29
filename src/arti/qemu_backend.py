@@ -284,12 +284,18 @@ VERILATOR_INC=${{VERILATOR_INC:-/usr/share/verilator/include}}
 QEMU_SRC=${{QEMU_SRC:?must be set}}
 QEMU_BUILD=${{QEMU_BUILD:-/tmp/qemu-arti-build}}
 TOP_MODULE={mod}
-ARTI_VERILATOR_THREADS=${{ARTI_VERILATOR_THREADS:-8}}
 ARTI_VERILATOR_BUILD_JOBS=${{ARTI_VERILATOR_BUILD_JOBS:-4}}
-if (( ARTI_VERILATOR_THREADS < 1 || ARTI_VERILATOR_BUILD_JOBS < 1 )); then
-    echo "Verilator thread and build job counts must be positive" >&2
+if (( ARTI_VERILATOR_BUILD_JOBS < 1 )); then
+    echo "Verilator build job count must be positive" >&2
     exit 1
 fi
+# Eval-region target for Verilator codegen. Deliberately NOT user-facing and
+# deliberately not named "threads": at runtime Verilator picks its own pool
+# size (VerilatedContext::m_threads = getProcessDefaultParallelism()), so the
+# old ARTI_VERILATOR_THREADS knob never controlled the thread count it appeared
+# to. What it did control was how many mtask partitions Verilator emits at
+# codegen, so it stays, and the post-codegen check below verifies it.
+ARTI_EVAL_REGIONS=8
 
 echo "=== Building embedded RTL model for {mod} ({protocol}) ==="
 mkdir -p "$SCRIPT_DIR/verilated"
@@ -302,9 +308,26 @@ if (( ${{#RTL_SOURCES[@]}} == 0 )); then
     exit 1
 fi
 verilator --cc --Mdir "$SCRIPT_DIR/verilated" \
-  --threads "$ARTI_VERILATOR_THREADS" \
+  --no-timing \
+  --threads "$ARTI_EVAL_REGIONS" \
   --CFLAGS "-Wno-undefined-bool-conversion" \
   "${{RTL_SOURCES[@]}}" --top-module "$TOP_MODULE"
+
+# Fail loudly if codegen produced a single-threaded model. Verilator falls
+# back to one partition on a design it cannot split, so without this the
+# "parallel" baseline quietly becomes serial. Count distinct __Vthread__..._tN
+# partitions: V*___024root__N.cpp is --output-split file chunking and
+# verilated_threads.cpp is never copied into --Mdir, so neither indicates
+# threading.
+_eval_regions=$(grep -ho '__Vthread__[A-Za-z0-9_]*__t[0-9]*' \\
+    "$SCRIPT_DIR"/verilated/V*.cpp 2>/dev/null | sed 's/.*__t//' | sort -u | wc -l | tr -d ' ') || true
+if (( _eval_regions < 2 )); then
+    echo "Verilator codegen produced $_eval_regions thread partition(s); expected >1." >&2
+    echo "  The model would be single-threaded and the baseline is not comparable." >&2
+    exit 1
+fi
+echo "  eval regions: $_eval_regions (runtime pool: Verilator-chosen)"
+
 
 # 2. Compile all sources into a static library
 cd "$SCRIPT_DIR/verilated"
