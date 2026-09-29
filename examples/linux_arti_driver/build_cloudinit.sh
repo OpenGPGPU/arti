@@ -125,7 +125,14 @@ case "$OPENGPU_AUTO_DISPLAY" in
             exit 1
         }
         ;;
-    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1, gradient or triangle" >&2; exit 1 ;;
+    desktop)
+        [ -n "$DRIVER_KO" ] && [ -n "$USERSPACE_DIR" ] && \
+            [ -x "$USERSPACE_DIR/opengpu_pipe_desktop" ] || {
+            echo "FAIL: desktop display needs the external driver and opengpu_pipe_desktop" >&2
+            exit 1
+        }
+        ;;
+    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1, gradient, triangle or desktop" >&2; exit 1 ;;
 esac
 
 # --- Stage module files into a temp dir, then make label=OPENGPU ISO ----------
@@ -152,7 +159,8 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_pipe_blit opengpu_pipe_strided_blit \
                 opengpu_pipe_resolve opengpu_pipe_texture_draw \
                 opengpu_pipe_depth_pass opengpu_pipe_msaa_draw \
-                opengpu_pipe_vertex_draw opengpu_pipe_present; do
+                opengpu_pipe_vertex_draw opengpu_pipe_present \
+                opengpu_pipe_desktop; do
         path="$USERSPACE_DIR/$name"
         [ -f "$path" ] || continue
         cp "$path" "$STAGE/$name"
@@ -260,6 +268,8 @@ if [ "$OPENGPU_AUTO_DISPLAY" = "gradient" ]; then
     display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_kms_present /dev/dri/card0'
 elif [ "$OPENGPU_AUTO_DISPLAY" = "triangle" ]; then
     display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_triangle_present /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold'
+elif [ "$OPENGPU_AUTO_DISPLAY" = "desktop" ]; then
+    display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_pipe_desktop /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold'
 else
     display_service=$'      Type=oneshot\n      RemainAfterExit=yes\n      ExecStart=/root/load_opengpu.sh'
 fi
