@@ -22,6 +22,16 @@ DISK="${DISK:-$ARTI_WORK/arti-dev.qcow2}"
 CIDATA="${CIDATA:-$ARTI_WORK/cloud-init.iso}"
 MODULES_ISO="${MODULES_ISO:-$ARTI_WORK/opengpu-modules.iso}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
+# Wall-clock cap. The ARTI device advances the RTL inline from the vCPU thread
+# and from a 100us QEMU_CLOCK_HOST IRQ poll timer, both under the BQL, so a
+# pathological settle can wedge QEMU with no guest progress at all. Without a
+# cap that shows up as this script hanging forever with no artifact.
+DEBIAN_TIMEOUT="${DEBIAN_TIMEOUT:-1800}"
+# Tee the guest console to a file. -serial mon:stdio writes to the terminal
+# only, so a hang leaves nothing behind to diagnose. Set DEBIAN_MON_STDIO=1 to
+# get the monitor back on stdio instead (and lose the log).
+SERIAL_LOG="${SERIAL_LOG:-$ARTI_WORK/debian-serial.log}"
+DEBIAN_MON_STDIO="${DEBIAN_MON_STDIO:-0}"
 # Prefer an explicit DRIVER_KO; otherwise use the OpenGPU build under ARTI_WORK.
 if [ -z "${DRIVER_KO:-}" ] && [ -f "$ARTI_WORK/opengpu-driver/gpu_drv.ko" ]; then
     DRIVER_KO="$ARTI_WORK/opengpu-driver/gpu_drv.ko"
@@ -48,9 +58,49 @@ if [ -z "$SSH_PORT" ]; then
     SSH_PORT="$(find_free_port)"
 fi
 
+TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+if [ -z "$TIMEOUT_BIN" ]; then
+    echo "FAIL: timeout/gtimeout not found. Run setup_env.sh first."
+    exit 1
+fi
+
 [ -f "$QEMU" ]  || { echo "FAIL: QEMU not found at $QEMU"; exit 1; }
 [ -f "$KERNEL" ] || { echo "FAIL: kernel not found at $KERNEL"; exit 1; }
 [ -f "$DISK" ]   || { echo "FAIL: disk not found at $DISK"; exit 1; }
+
+# Both backends install to the same path under the same name
+# (hw/misc/libarti_rtl_model.a), and build_embedded.sh skips the copy when the
+# archive is byte-identical, so the last build wins silently and GPU_SIM at boot
+# time says nothing about what is actually linked in. Probe the binary itself;
+# the archive only decides what was available at link time.
+detect_backend() {
+    local syms archive n_fs n_vlt
+    # Capture nm output first: under `set -o pipefail`, `nm | grep -q` fails
+    # when grep exits early (nm takes SIGPIPE) even on a real match.
+    syms="$(nm "$QEMU" 2>/dev/null || true)"
+    case "$syms" in
+        *GpuHostSystemAxiDut*) BACKEND="flashsim" ;;
+        *VGpuHostSystemAxi*)   BACKEND="verilator" ;;
+        *)                     BACKEND="unknown" ;;
+    esac
+    BACKEND_STAMP="$(date -r "$QEMU" '+%Y-%m-%d %H:%M')"
+    # No pipeline here on purpose: `ls | head -1` gets SIGPIPE on ls, which
+    # under `set -o pipefail` fails the whole assignment and, with `set -e`,
+    # kills the script with no output at all.
+    archive=""
+    for cand in "${QEMU_SRC:-$ARTI_WORK/qemu-src}/hw/misc/libarti_rtl_model.a" \
+                "$ARTI_WORK"/qemu-*/hw/misc/libarti_rtl_model.a; do
+        if [ -f "$cand" ]; then archive="$cand"; break; fi
+    done
+    if [ -n "$archive" ]; then
+        n_fs="$(ar t "$archive" 2>/dev/null | grep -c '^dut_' || true)"
+        n_vlt="$(ar t "$archive" 2>/dev/null | grep -c '^VGpu' || true)"
+        BACKEND_ARCHIVE="$archive ($n_fs dut_ / $n_vlt VGpu)"
+    else
+        BACKEND_ARCHIVE="archive not found"
+    fi
+}
+detect_backend
 # Auto-build cloud-init + modules ISO if missing/stale.
 if [ ! -f "$CIDATA" ] || [ ! -f "$MODULES_ISO" ] || \
    { [ -f "$SCRIPT_DIR/arti_rtl_test.ko" ] && [ "$SCRIPT_DIR/arti_rtl_test.ko" -nt "$CIDATA" ]; } || \
@@ -79,7 +129,8 @@ echo "=== ARTI Debian Dev Environment ==="
 echo "  Disk    : $DISK (persistent)"
 echo "  Kernel  : $KERNEL"
 echo "  Modules : $MODULES_ISO"
-echo "  Device  : embedded RTL model (FlashSim if that QEMU was linked)"
+echo "  Device  : embedded RTL model"
+echo "  Backend  : $BACKEND (QEMU built ${BACKEND_STAMP:-?}; archive $BACKEND_ARCHIVE)"
 echo "  Display : $QEMU_DISPLAY (serial console for login; GPU mode may be tiny)"
 echo "  Login   : root (password: arti)"
 echo "  Network : user-mode (SLIRP) - apt/DNS via 10.0.2.2"
@@ -89,7 +140,13 @@ if [ "${OPENGPU_AUTO_DISPLAY:-0}" = "1" ]; then
 else
     echo "  GPU     : after boot run /root/load_opengpu.sh or /root/load_opengpu.sh test"
 fi
-echo "  Exit    : poweroff -f  or  Ctrl+A then X"
+if [ "$DEBIAN_MON_STDIO" = "1" ]; then
+    echo "  Exit    : poweroff -f  or  Ctrl+A then X"
+else
+    echo "  Exit    : poweroff -f  or  Ctrl+C (guest keeps stdin; monitor is off)"
+    echo "  Console : also written to $SERIAL_LOG"
+fi
+echo "  Cap     : ${DEBIAN_TIMEOUT}s wall clock, then QEMU is killed"
 echo ""
 
 # virtio-mmio on mach-virt registers -device virtio-blk-device nodes in reverse
@@ -100,10 +157,32 @@ if [ -n "${QEMU_FW_DIR:-}" ] && [ -d "$QEMU_FW_DIR" ]; then
     QEMU_ARGS+=(-L "$QEMU_FW_DIR")
 fi
 
-exec "$QEMU" \
-  "${QEMU_ARGS[@]}" \
+# -serial mon:stdio writes the guest console to the terminal only, so a wedged
+# guest leaves no artifact at all. With DEBIAN_MON_STDIO unset, mirror the same
+# stream into $SERIAL_LOG while keeping it on screen; signal=on keeps Ctrl+C
+# going to the guest. DEBIAN_MON_STDIO=1 restores the plain monitor-on-stdio
+# setup and gives up the log.
+SERIAL_ARGS=()
+if [ "$DEBIAN_MON_STDIO" = "1" ]; then
+    SERIAL_ARGS=(-serial mon:stdio)
+else
+    mkdir -p "$(dirname "$SERIAL_LOG")"
+    SERIAL_ARGS=(-chardev "stdio,id=arti0,signal=on,logfile=$SERIAL_LOG"
+                 -serial chardev:arti0 -monitor none)
+fi
+
+# Not exec: the timeout wrapper has to be the parent so a wedged guest is
+# killed instead of hanging this script forever. ARTI advances the RTL inline
+# from the vCPU thread and from a 100us QEMU_CLOCK_HOST IRQ poll timer, both
+# under the BQL, so "no guest progress" is a reachable state. The `|| rc=$?` is
+# load-bearing under `set -e`: without it a non-zero exit (124 = timed out) kills
+# the script right here and the report below never prints.
+rc=0
+"$TIMEOUT_BIN" "$DEBIAN_TIMEOUT" "$QEMU" \
+  "${QEMU_ARGS[@]+"${QEMU_ARGS[@]}"}" \
   -machine virt -cpu cortex-a53 -m 1G -smp 2 \
-  "${DISPLAY_ARGS[@]}" -serial mon:stdio \
+  "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" \
+  "${SERIAL_ARGS[@]+"${SERIAL_ARGS[@]}"}" \
   -global virtio-mmio.force-legacy=false \
   -drive if=none,file="$MODULES_ISO",format=raw,id=opengpu,read-only=on \
   -device virtio-blk-device,drive=opengpu \
@@ -113,7 +192,18 @@ exec "$QEMU" \
   -device virtio-blk-device,drive=hd0 \
   -device virtio-keyboard-device \
   -device virtio-tablet-device \
-  -netdev user,id=net0,hostfwd=tcp::${SSH_PORT}-:22 \
+  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
   -device virtio-net-device,netdev=net0 \
   -kernel "$KERNEL" \
-  -append "root=/dev/vda1 console=tty0 console=ttyAMA0 rw rootwait systemd.mask=systemd-resolved.service systemd.mask=systemd-networkd-wait-online.service systemd.mask=boot-efi.mount"
+  -append "root=/dev/vda1 console=tty0 console=ttyAMA0 rw rootwait systemd.mask=systemd-resolved.service systemd.mask=systemd-networkd-wait-online.service systemd.mask=boot-efi.mount" \
+  || rc=$?
+
+rc=${rc:-0}
+if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo ""
+    echo "!! QEMU hit the ${DEBIAN_TIMEOUT}s wall-clock cap (rc=$rc) and was killed."
+    [ "$DEBIAN_MON_STDIO" = "1" ] || echo "!! Guest console log: $SERIAL_LOG"
+    tail -n 25 "${SERIAL_LOG:-/dev/null}" 2>/dev/null || true
+    echo ""
+fi
+exit "$rc"
