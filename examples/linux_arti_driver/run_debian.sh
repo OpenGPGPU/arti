@@ -22,11 +22,6 @@ DISK="${DISK:-$ARTI_WORK/arti-dev.qcow2}"
 CIDATA="${CIDATA:-$ARTI_WORK/cloud-init.iso}"
 MODULES_ISO="${MODULES_ISO:-$ARTI_WORK/opengpu-modules.iso}"
 GPU_REFERENCE="${GPU_REFERENCE:-0}"
-# Wall-clock cap. The ARTI device advances the RTL inline from the vCPU thread
-# and from a 100us QEMU_CLOCK_HOST IRQ poll timer, both under the BQL, so a
-# pathological settle can wedge QEMU with no guest progress at all. Without a
-# cap that shows up as this script hanging forever with no artifact.
-DEBIAN_TIMEOUT="${DEBIAN_TIMEOUT:-1800}"
 # Tee the guest console to a file. -serial mon:stdio writes to the terminal
 # only, so a hang leaves nothing behind to diagnose. Set DEBIAN_MON_STDIO=1 to
 # get the monitor back on stdio instead (and lose the log).
@@ -56,12 +51,6 @@ PY
 }
 if [ -z "$SSH_PORT" ]; then
     SSH_PORT="$(find_free_port)"
-fi
-
-TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-if [ -z "$TIMEOUT_BIN" ]; then
-    echo "FAIL: timeout/gtimeout not found. Run setup_env.sh first."
-    exit 1
 fi
 
 [ -f "$QEMU" ]  || { echo "FAIL: QEMU not found at $QEMU"; exit 1; }
@@ -146,7 +135,6 @@ else
     echo "  Exit    : poweroff -f  or  Ctrl+C (guest keeps stdin; monitor is off)"
     echo "  Console : also written to $SERIAL_LOG"
 fi
-echo "  Cap     : ${DEBIAN_TIMEOUT}s wall clock, then QEMU is killed"
 echo ""
 
 # virtio-mmio on mach-virt registers -device virtio-blk-device nodes in reverse
@@ -171,14 +159,10 @@ else
                  -serial chardev:arti0 -monitor none)
 fi
 
-# Not exec: the timeout wrapper has to be the parent so a wedged guest is
-# killed instead of hanging this script forever. ARTI advances the RTL inline
-# from the vCPU thread and from a 100us QEMU_CLOCK_HOST IRQ poll timer, both
-# under the BQL, so "no guest progress" is a reachable state. The `|| rc=$?` is
-# load-bearing under `set -e`: without it a non-zero exit (124 = timed out) kills
-# the script right here and the report below never prints.
-rc=0
-"$TIMEOUT_BIN" "$DEBIAN_TIMEOUT" "$QEMU" \
+# Replace this script so QEMU stays in the terminal's foreground process
+# group. A timeout(1) parent calls setpgid and backgrounds QEMU, which
+# stops the Cocoa window on SIGTTIN.
+exec "$QEMU" \
   "${QEMU_ARGS[@]+"${QEMU_ARGS[@]}"}" \
   -machine virt -cpu cortex-a53 -m 1G -smp 2 \
   "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" \
@@ -195,15 +179,4 @@ rc=0
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
   -device virtio-net-device,netdev=net0 \
   -kernel "$KERNEL" \
-  -append "root=/dev/vda1 console=tty0 console=ttyAMA0 rw rootwait systemd.mask=systemd-resolved.service systemd.mask=systemd-networkd-wait-online.service systemd.mask=boot-efi.mount" \
-  || rc=$?
-
-rc=${rc:-0}
-if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-    echo ""
-    echo "!! QEMU hit the ${DEBIAN_TIMEOUT}s wall-clock cap (rc=$rc) and was killed."
-    [ "$DEBIAN_MON_STDIO" = "1" ] || echo "!! Guest console log: $SERIAL_LOG"
-    tail -n 25 "${SERIAL_LOG:-/dev/null}" 2>/dev/null || true
-    echo ""
-fi
-exit "$rc"
+  -append "root=/dev/vda1 console=tty0 console=ttyAMA0 rw rootwait systemd.mask=systemd-resolved.service systemd.mask=systemd-networkd-wait-online.service systemd.mask=boot-efi.mount"
