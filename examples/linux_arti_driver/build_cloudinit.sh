@@ -162,6 +162,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_pipe_vertex_draw opengpu_pipe_present \
                 opengpu_pipe_desktop \
                 opengpu_gl_triangle opengpu_gl_triangle.bin \
+                opengpu_gl_texture opengpu_gl_texture.bin \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
