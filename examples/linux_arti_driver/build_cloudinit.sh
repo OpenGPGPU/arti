@@ -166,6 +166,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_blend opengpu_gl_blend.bin \
                 opengpu_gl_scissor opengpu_gl_scissor.bin \
                 opengpu_gl_transform opengpu_gl_transform.bin \
+                opengpu_gl_textransform opengpu_gl_textransform.bin \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
