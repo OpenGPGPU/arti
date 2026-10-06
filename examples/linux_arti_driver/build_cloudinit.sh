@@ -172,6 +172,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_opacity opengpu_gl_opacity.bin \
                 opengpu_gl_sprite opengpu_gl_sprite.bin \
                 opengpu_gl_fill opengpu_gl_fill.bin \
+                opengpu_gl_icon opengpu_gl_icon.bin \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
