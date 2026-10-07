@@ -179,6 +179,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_quad opengpu_gl_quad.bin \
                 opengpu_gl_pane opengpu_gl_pane.bin \
                 opengpu_gl_wash opengpu_gl_wash.bin \
+                opengpu_gl_ramp opengpu_gl_ramp.bin \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
