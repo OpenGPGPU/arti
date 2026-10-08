@@ -191,6 +191,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_qt_stencilclip opengpu_gl_qt_stencilclip.bin \
                 opengpu_gl_qt_rendernode opengpu_gl_qt_rendernode.bin \
                 opengpu_gl_gtk_color opengpu_gl_gtk_color.bin \
+                opengpu_gl_gtk_coverage opengpu_gl_gtk_coverage.bin \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
