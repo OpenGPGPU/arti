@@ -186,6 +186,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_haze opengpu_gl_haze.bin \
                 opengpu_gl_qt_flatcolor opengpu_gl_qt_flatcolor.bin \
                 opengpu_gl_qt_texture opengpu_gl_qt_texture.bin \
+                opengpu_gl_qt_opacity opengpu_gl_qt_opacity.bin \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
