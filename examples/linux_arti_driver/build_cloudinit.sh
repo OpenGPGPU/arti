@@ -283,12 +283,54 @@ packages_yaml=""
 if [ "${CLOUDINIT_PACKAGES:-0}" = "1" ] || [ "${CLOUDINIT_PACKAGES:-0}" = "true" ]; then
     packages_yaml=$'packages:\n  - kmod\n  - build-essential\n  - git\n  - vim-tiny\n  - python3\n  - ca-certificates\n  - curl\n  - pciutils\n  - strace\n  - gdb\n'
 fi
-autoload_commands=""
-if [ "$OPENGPU_AUTO_DISPLAY" != "0" ]; then
-    autoload_commands=$'  - systemctl enable opengpu-boot-display.service\n  - systemctl restart opengpu-boot-display.service\n'
-else
-    autoload_commands=$'  - systemctl disable opengpu-boot-display.service || true\n'
+# A fixed salt keeps the hash stable. Cloud-init writes a $6$ hash as-is
+# instead of running crypt on the guest.
+if ! ARTI_PASSWORD_HASH="$(openssl passwd -6 -salt opengpu arti 2>/dev/null)" ||
+    [ -z "$ARTI_PASSWORD_HASH" ]; then
+    echo "FAIL: openssl passwd -6 is required to prehash the guest password" >&2
+    exit 1
 fi
+case "$OPENGPU_AUTO_DISPLAY" in
+    gradient)
+        display_argv="/root/opengpu_kms_present /dev/dri/card0" ;;
+    triangle)
+        display_argv="/root/opengpu_triangle_present /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold" ;;
+    desktop)
+        display_argv="/root/opengpu_pipe_desktop /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold" ;;
+    0)  display_argv="" ;;
+    *)  display_argv="/root/load_opengpu.sh" ;;
+esac
+finish_script=$(cat <<'EOS'
+#!/bin/sh
+set -eu
+systemctl daemon-reload
+systemctl enable arti-net.service
+systemctl start arti-net.service || true
+systemctl enable opengpu-sync.service
+# The multi-user start already copied this boot's module disk.
+systemctl start opengpu-sync.service || true
+expected="__DISPLAY_ARGV__"
+if [ -z "$expected" ]; then
+    systemctl disable --now opengpu-boot-display.service || true
+    exit 0
+fi
+pid="$(systemctl show -p MainPID --value opengpu-boot-display.service 2>/dev/null || true)"
+running=""
+if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/cmdline" ]; then
+    running="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
+    running="${running% }"
+fi
+if [ "$running" = "$expected" ]; then
+    echo "opengpu-boot-display already running the requested client"
+    exit 0
+fi
+systemctl stop opengpu-boot-display.service || true
+systemctl enable opengpu-boot-display.service
+systemctl restart opengpu-boot-display.service
+EOS
+)
+finish_script="${finish_script/__DISPLAY_ARGV__/$display_argv}"
+finish_body="$(printf '%s\n' "$finish_script" | sed 's/^/      /')"
 
 if [ "$OPENGPU_AUTO_DISPLAY" = "gradient" ]; then
     display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_kms_present /dev/dri/card0'
@@ -304,11 +346,14 @@ cat > "$CI_DIR/user-data" <<EOF
 #cloud-config
 disable_root: false
 ssh_pwauth: true
+# A new instance-id is only how this disk reapplies user-data. Keep the host
+# keys so cloud-init does not regenerate them on every launch.
+ssh_deletekeys: false
 chpasswd:
   expire: false
   list: |
-    root:arti
-    debian:arti
+    root:${ARTI_PASSWORD_HASH}
+    debian:${ARTI_PASSWORD_HASH}
 ${packages_yaml}bootcmd:
   - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config || true
 write_files:
@@ -380,19 +425,17 @@ ${display_service}
 
       [Install]
       WantedBy=multi-user.target
+  - path: /usr/local/sbin/opengpu-finish-boot
+    permissions: '0755'
+    content: |
+${finish_body}
 runcmd:
   - sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
   - growpart /dev/vda 1 || true
   - resize2fs /dev/vda1 || true
-  # A service enabled by an earlier boot may already be running a gradient or
-  # triangle presenter. Stop it before replacing the unit with this instance's mode.
-  - systemctl stop opengpu-boot-display.service || true
-  - systemctl daemon-reload
-  - systemctl enable arti-net.service
-  - systemctl start arti-net.service
-  - systemctl enable opengpu-sync.service
-  - systemctl restart opengpu-sync.service
-${autoload_commands}
+  # Leave a display client that is already the requested program. Stopping it
+  # waits for the framebuffer clear that boot just started.
+  - /usr/local/sbin/opengpu-finish-boot
 EOF
 
 # New instance-id so existing disks pick up the tiny oneshot (cidata is small,
