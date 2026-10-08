@@ -303,25 +303,28 @@ esac
 finish_script=$(cat <<'EOS'
 #!/bin/sh
 set -eu
+expected="__DISPLAY_ARGV__"
+# Match the live process before talking to systemd. daemon-reload while the
+# framebuffer clear is running costs minutes on the emulated guest.
+if [ -n "$expected" ]; then
+    for cmd in /proc/[0-9]*/cmdline; do
+        [ -r "$cmd" ] || continue
+        running="$(tr '\0' ' ' < "$cmd" 2>/dev/null || true)"
+        running="${running% }"
+        if [ "$running" = "$expected" ]; then
+            echo "opengpu-boot-display already running the requested client"
+            exit 0
+        fi
+    done
+fi
 systemctl daemon-reload
 systemctl enable arti-net.service
 systemctl start arti-net.service || true
 systemctl enable opengpu-sync.service
 # The multi-user start already copied this boot's module disk.
 systemctl start opengpu-sync.service || true
-expected="__DISPLAY_ARGV__"
 if [ -z "$expected" ]; then
     systemctl disable --now opengpu-boot-display.service || true
-    exit 0
-fi
-pid="$(systemctl show -p MainPID --value opengpu-boot-display.service 2>/dev/null || true)"
-running=""
-if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/cmdline" ]; then
-    running="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
-    running="${running% }"
-fi
-if [ "$running" = "$expected" ]; then
-    echo "opengpu-boot-display already running the requested client"
     exit 0
 fi
 systemctl stop opengpu-boot-display.service || true
