@@ -132,7 +132,13 @@ case "$OPENGPU_AUTO_DISPLAY" in
             exit 1
         }
         ;;
-    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1, gradient, triangle or desktop" >&2; exit 1 ;;
+    weston)
+        [ -n "$DRIVER_KO" ] && [ -n "$USERSPACE_DIR" ] || {
+            echo "FAIL: weston display needs the external driver and userspace" >&2
+            exit 1
+        }
+        ;;
+    *) echo "FAIL: OPENGPU_AUTO_DISPLAY must be 0, console, 1, gradient, triangle, desktop or weston" >&2; exit 1 ;;
 esac
 
 # --- Stage module files into a temp dir, then make label=OPENGPU ISO ----------
@@ -192,6 +198,8 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_qt_rendernode opengpu_gl_qt_rendernode.bin \
                 opengpu_gl_gtk_color opengpu_gl_gtk_color.bin \
                 opengpu_gl_gtk_coverage opengpu_gl_gtk_coverage.bin \
+                gtk_opengpu_smoke.c opengpu_gtk_smoke.sh \
+                opengpu_gtk_smoke_build.sh \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1; do
@@ -283,6 +291,21 @@ printf '%s\n' "${LOAD_ORDER[@]+"${LOAD_ORDER[@]}"}" > "$STAGE/arti_driver_load_o
 
 echo "  load order: $(IFS=' -> '; echo "${LOAD_ORDER[*]-}")"
 rm -f "$MODULES_ISO"
+if [ "$OPENGPU_AUTO_DISPLAY" = "weston" ]; then
+    cat > "$STAGE/opengpu_weston.sh" <<'WESTON_SCRIPT'
+#!/bin/sh
+set -eu
+mkdir -p /run/user/0
+chmod 700 /run/user/0
+export XDG_RUNTIME_DIR=/run/user/0
+export WAYLAND_DISPLAY=opengpu-gl
+export LIBGL_DRIVERS_PATH=/root
+export LD_LIBRARY_PATH=/root
+export MESA_LOADER_DRIVER_OVERRIDE=opengpu
+exec weston --backend=drm-backend.so --tty=1 --socket=opengpu-gl
+WESTON_SCRIPT
+    chmod +x "$STAGE/opengpu_weston.sh"
+fi
 xorriso -as mkisofs -V OPENGPU -J -r -o "$MODULES_ISO" "$STAGE" 2>&1 | tail -2
 echo "  wrote $MODULES_ISO ($(wc -c < "$MODULES_ISO") bytes)"
 
@@ -305,6 +328,8 @@ case "$OPENGPU_AUTO_DISPLAY" in
         display_argv="/root/opengpu_triangle_present /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold" ;;
     desktop)
         display_argv="/root/opengpu_pipe_desktop /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold" ;;
+    weston)
+        display_argv="/root/opengpu_weston.sh" ;;
     0)  display_argv="" ;;
     *)  display_argv="/root/load_opengpu.sh" ;;
 esac
@@ -349,6 +374,8 @@ elif [ "$OPENGPU_AUTO_DISPLAY" = "triangle" ]; then
     display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_triangle_present /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold'
 elif [ "$OPENGPU_AUTO_DISPLAY" = "desktop" ]; then
     display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_pipe_desktop /dev/dri/card0 /root/opengpu_fragment_tint.bin --hold'
+elif [ "$OPENGPU_AUTO_DISPLAY" = "weston" ]; then
+    display_service=$'      Type=simple\n      ExecStartPre=/root/load_opengpu.sh\n      ExecStart=/root/opengpu_weston.sh'
 else
     display_service=$'      Type=oneshot\n      RemainAfterExit=yes\n      ExecStart=/root/load_opengpu.sh'
 fi
