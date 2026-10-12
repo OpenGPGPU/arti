@@ -946,6 +946,13 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
     has_display = bool(config and config.display_enabled)
     has_guest_scanout = bool(has_display and config.display_source == "guest-memory")
     has_mmio_vram = bool(has_display and not has_guest_scanout)
+    # The GPU owns the mode through its scanout registers. The profile width
+    # and height are only the elaborated maximum the copy buffer can hold.
+    gpu_mode = bool(
+        has_guest_scanout
+        and config.display_width_register is not None
+        and config.display_height_register is not None
+    )
 
     lines = []
     lines.append("/* arti-qemu-stub-v5 */")
@@ -1051,6 +1058,9 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
 
     if has_display:
         lines.append("#define ARTI_FB_OFFSET 0x{:x}u".format(config.display_framebuffer_offset))
+        if gpu_mode:
+            lines.append("/* Elaborated maximum. The GPU scanout registers select")
+            lines.append(" * the active mode; these only bound the copy buffer. */")
         lines.append("#define ARTI_FB_WIDTH {}u".format(config.display_width))
         lines.append("#define ARTI_FB_HEIGHT {}u".format(config.display_height))
         lines.append("#define ARTI_FB_BPP 32u")
@@ -1074,6 +1084,23 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
                     1000000000 // config.display_refresh_hz
                 ))
         lines.append("")
+        if gpu_mode:
+            lines.append("static unsigned arti_mode_width(const ArtiRtlState *s)")
+            lines.append("{")
+            lines.append("    unsigned width = s->scanout_width;")
+            lines.append("    if (width > ARTI_FB_WIDTH)")
+            lines.append("        width = ARTI_FB_WIDTH;")
+            lines.append("    return width;")
+            lines.append("}")
+            lines.append("")
+            lines.append("static unsigned arti_mode_height(const ArtiRtlState *s)")
+            lines.append("{")
+            lines.append("    unsigned height = s->scanout_height;")
+            lines.append("    if (height > ARTI_FB_HEIGHT)")
+            lines.append("        height = ARTI_FB_HEIGHT;")
+            lines.append("    return height;")
+            lines.append("}")
+            lines.append("")
         lines.append("static void arti_gfx_invalidate(void *opaque)")
         lines.append("{")
         lines.append("    ArtiRtlState *s = opaque;")
@@ -1087,10 +1114,14 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    unsigned y;")
         lines.append("")
         if has_guest_scanout:
-            lines.append("    unsigned width = s->scanout_width ? s->scanout_width : ARTI_FB_WIDTH;")
-            lines.append("    unsigned height = s->scanout_height ? s->scanout_height : ARTI_FB_HEIGHT;")
-            lines.append("    if (width > ARTI_FB_WIDTH) width = ARTI_FB_WIDTH;")
-            lines.append("    if (height > ARTI_FB_HEIGHT) height = ARTI_FB_HEIGHT;")
+            if gpu_mode:
+                lines.append("    unsigned width = arti_mode_width(s);")
+                lines.append("    unsigned height = arti_mode_height(s);")
+            else:
+                lines.append("    unsigned width = s->scanout_width ? s->scanout_width : ARTI_FB_WIDTH;")
+                lines.append("    unsigned height = s->scanout_height ? s->scanout_height : ARTI_FB_HEIGHT;")
+                lines.append("    if (width > ARTI_FB_WIDTH) width = ARTI_FB_WIDTH;")
+                lines.append("    if (height > ARTI_FB_HEIGHT) height = ARTI_FB_HEIGHT;")
             lines.append("    if (!s->scanout_enable || !s->scanout_addr || !width || !height)")
             lines.append("        return false;")
             lines.append("    if (surface_width(surface) != width ||")
@@ -1151,8 +1182,12 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
             lines.append("    const char *enable_env = getenv(\"ARTI_DISPLAY_DUMP_ENABLE\");")
             lines.append("    const char *pixel_env = getenv(\"ARTI_DISPLAY_DUMP_PIXEL\");")
             lines.append("    int target_enable = enable_env ? atoi(enable_env) : 1;")
-            lines.append("    unsigned width = s->scanout_width ? s->scanout_width : ARTI_FB_WIDTH;")
-            lines.append("    unsigned height = s->scanout_height ? s->scanout_height : ARTI_FB_HEIGHT;")
+            if gpu_mode:
+                lines.append("    unsigned width = arti_mode_width(s);")
+                lines.append("    unsigned height = arti_mode_height(s);")
+            else:
+                lines.append("    unsigned width = s->scanout_width ? s->scanout_width : ARTI_FB_WIDTH;")
+                lines.append("    unsigned height = s->scanout_height ? s->scanout_height : ARTI_FB_HEIGHT;")
             lines.append("    unsigned stride = s->scanout_stride ? s->scanout_stride : (width * 4u);")
             lines.append("    unsigned y, x;")
             lines.append("    uint32_t src[ARTI_FB_WIDTH];")
@@ -1163,8 +1198,9 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
             lines.append("    if (target_enable < 1) target_enable = 1;")
             lines.append("    if (s->scanout_enable_count < (uint32_t)target_enable) return;")
             lines.append("    if (!s->scanout_enable || !s->scanout_addr || !width || !height) return;")
-            lines.append("    if (width > ARTI_FB_WIDTH) width = ARTI_FB_WIDTH;")
-            lines.append("    if (height > ARTI_FB_HEIGHT) height = ARTI_FB_HEIGHT;")
+            if not gpu_mode:
+                lines.append("    if (width > ARTI_FB_WIDTH) width = ARTI_FB_WIDTH;")
+                lines.append("    if (height > ARTI_FB_HEIGHT) height = ARTI_FB_HEIGHT;")
             lines.append("    if (pixel_env && pixel_env[0]) {")
             lines.append("        char *end;")
             lines.append("        unsigned long expected = strtoul(pixel_env, &end, 16);")
@@ -1301,9 +1337,14 @@ def render_qemu_stub(mmio_size, interrupts, config=None):
         lines.append("    s->vram = g_malloc0(ARTI_FB_SIZE);")
     if has_guest_scanout:
         lines.append("    s->scanout_addr = 0;")
-        lines.append("    s->scanout_stride = ARTI_FB_STRIDE;")
-        lines.append("    s->scanout_width = ARTI_FB_WIDTH;")
-        lines.append("    s->scanout_height = ARTI_FB_HEIGHT;")
+        if gpu_mode:
+            lines.append("    s->scanout_stride = 0;")
+            lines.append("    s->scanout_width = 0;")
+            lines.append("    s->scanout_height = 0;")
+        else:
+            lines.append("    s->scanout_stride = ARTI_FB_STRIDE;")
+            lines.append("    s->scanout_width = ARTI_FB_WIDTH;")
+            lines.append("    s->scanout_height = ARTI_FB_HEIGHT;")
         lines.append("    s->scanout_format = 0;")
         lines.append("    s->scanout_enable_count = 0;")
         # Without a control register, BASE writes alone enable scanout (legacy).
