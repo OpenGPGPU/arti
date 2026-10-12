@@ -27,6 +27,10 @@ GPU_REFERENCE="${GPU_REFERENCE:-0}"
 # get the monitor back on stdio instead (and lose the log).
 SERIAL_LOG="${SERIAL_LOG:-$ARTI_WORK/debian-serial.log}"
 DEBIAN_MON_STDIO="${DEBIAN_MON_STDIO:-0}"
+# Serial target: `vc` puts the guest UART in QEMU's graphical console,
+# `mon:stdio` keeps it on the launching terminal, and `logfile` mirrors it to
+# a file while retaining the old stdio chardev behavior.
+DEBIAN_SERIAL_TARGET="${DEBIAN_SERIAL_TARGET:-}"
 # Prefer an explicit DRIVER_KO; otherwise use the OpenGPU build under ARTI_WORK.
 if [ -z "${DRIVER_KO:-}" ] && [ -f "$ARTI_WORK/opengpu-driver/gpu_drv.ko" ]; then
     DRIVER_KO="$ARTI_WORK/opengpu-driver/gpu_drv.ko"
@@ -114,6 +118,14 @@ if [ -z "${QEMU_DISPLAY:-}" ]; then
 fi
 DISPLAY_ARGS=(-display "$QEMU_DISPLAY")
 
+if [ -z "$DEBIAN_SERIAL_TARGET" ]; then
+    if [ "$DEBIAN_MON_STDIO" = "1" ]; then
+        DEBIAN_SERIAL_TARGET="mon:stdio"
+    else
+        DEBIAN_SERIAL_TARGET="logfile"
+    fi
+fi
+
 echo "=== ARTI Debian Dev Environment ==="
 echo "  Disk    : $DISK (persistent)"
 echo "  Kernel  : $KERNEL"
@@ -121,6 +133,7 @@ echo "  Modules : $MODULES_ISO"
 echo "  Device  : embedded RTL model"
 echo "  Backend  : $BACKEND (QEMU built ${BACKEND_STAMP:-?}; archive $BACKEND_ARCHIVE)"
 echo "  Display : $QEMU_DISPLAY (serial console for login; GPU mode may be tiny)"
+echo "  Serial  : $DEBIAN_SERIAL_TARGET"
 echo "  Login   : root (password: arti)"
 echo "  Network : user-mode (SLIRP) - apt/DNS via 10.0.2.2"
 echo "  SSH     : ssh root@localhost -p $SSH_PORT"
@@ -129,7 +142,7 @@ if [ "${OPENGPU_AUTO_DISPLAY:-0}" = "1" ]; then
 else
     echo "  GPU     : after boot run /root/load_opengpu.sh or /root/load_opengpu.sh test"
 fi
-if [ "$DEBIAN_MON_STDIO" = "1" ]; then
+if [ "$DEBIAN_SERIAL_TARGET" = "mon:stdio" ] || [ "$DEBIAN_SERIAL_TARGET" = "vc" ]; then
     echo "  Exit    : poweroff -f  or  Ctrl+A then X"
 else
     echo "  Exit    : poweroff -f  or  Ctrl+C (guest keeps stdin; monitor is off)"
@@ -151,13 +164,23 @@ fi
 # going to the guest. DEBIAN_MON_STDIO=1 restores the plain monitor-on-stdio
 # setup and gives up the log.
 SERIAL_ARGS=()
-if [ "$DEBIAN_MON_STDIO" = "1" ]; then
+case "$DEBIAN_SERIAL_TARGET" in
+vc)
+    SERIAL_ARGS=(-serial vc -monitor none)
+    ;;
+mon:stdio)
     SERIAL_ARGS=(-serial mon:stdio)
-else
+    ;;
+logfile)
     mkdir -p "$(dirname "$SERIAL_LOG")"
     SERIAL_ARGS=(-chardev "stdio,id=arti0,signal=on,logfile=$SERIAL_LOG"
                  -serial chardev:arti0 -monitor none)
-fi
+    ;;
+*)
+    echo "FAIL: DEBIAN_SERIAL_TARGET must be vc, mon:stdio or logfile" >&2
+    exit 1
+    ;;
+esac
 
 # Replace this script so QEMU stays in the terminal's foreground process
 # group. A timeout(1) parent calls setpgid and backgrounds QEMU, which
