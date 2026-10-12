@@ -674,6 +674,8 @@ class MultiProtocolTest(unittest.TestCase):
             stub = (output / "qemu/arti-rtl.c").read_text()
             self.assertIn("address_space_read(&address_space_memory", stub)
             self.assertIn("address_space_write(&address_space_memory", stub)
+            self.assertIn("unsigned first = i;", stub)
+            self.assertIn("i - first", stub)
             self.assertIn("arti_rtl_model_set_memory_callbacks", stub)
 
     def test_axi4_memory_clients_share_guest_callback_bridge(self):
