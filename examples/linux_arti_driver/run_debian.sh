@@ -157,6 +157,10 @@ QEMU_ARGS=()
 if [ -n "${QEMU_FW_DIR:-}" ] && [ -d "$QEMU_FW_DIR" ]; then
     QEMU_ARGS+=(-L "$QEMU_FW_DIR")
 fi
+QMP_ARGS=()
+if [ -n "${QEMU_QMP_SOCKET:-}" ]; then
+    QMP_ARGS+=(-qmp "unix:${QEMU_QMP_SOCKET},server=on,wait=off")
+fi
 
 # -serial mon:stdio writes the guest console to the terminal only, so a wedged
 # guest leaves no artifact at all. With DEBIAN_MON_STDIO unset, mirror the same
@@ -187,6 +191,7 @@ esac
 # stops the Cocoa window on SIGTTIN.
 exec "$QEMU" \
   "${QEMU_ARGS[@]+"${QEMU_ARGS[@]}"}" \
+  "${QMP_ARGS[@]+"${QMP_ARGS[@]}"}" \
   -machine virt -cpu cortex-a53 -m 1G -smp 2 \
   "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" \
   "${SERIAL_ARGS[@]+"${SERIAL_ARGS[@]}"}" \

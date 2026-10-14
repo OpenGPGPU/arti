@@ -446,6 +446,17 @@ if has_boot_fb:
     g_free(fbnode);
 """
 
+# The DRM driver needs the elaborated scanout geometry even when the QEMU
+# compositor uses guest-memory scanout rather than a boot framebuffer.
+gpu_width = int(os.environ.get("GPU_WIDTH", "64"), 0)
+gpu_height = int(os.environ.get("GPU_HEIGHT", "64"), 0)
+gpu_stride = int(os.environ.get("GPU_STRIDE", str(gpu_width * 4)), 0)
+display_dt += f"""
+    qemu_fdt_setprop_cells(ms->fdt, node, "opengpu,width", 0x{gpu_width:x});
+    qemu_fdt_setprop_cells(ms->fdt, node, "opengpu,height", 0x{gpu_height:x});
+    qemu_fdt_setprop_cells(ms->fdt, node, "opengpu,stride", 0x{gpu_stride:x});
+"""
+
 irq_connect = ""
 irq_dt = ""
 if irq_count:

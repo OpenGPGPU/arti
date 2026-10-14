@@ -302,7 +302,43 @@ export WAYLAND_DISPLAY=opengpu-gl
 export LIBGL_DRIVERS_PATH=/root
 export LD_LIBRARY_PATH=/root
 export MESA_LOADER_DRIVER_OVERRIDE=opengpu
-exec weston --backend=drm-backend.so --tty=1 --socket=opengpu-gl
+export GDK_BACKEND=wayland GDK_GL=gles
+export OPENGPU_FENCE_TIMEOUT_MS=1800000
+export OPENGPU_TRACE_DRAWS=1
+cat >/tmp/opengpu-weston.ini <<'CONFIG'
+[core]
+idle-time=0
+[shell]
+background-color=0xff336699
+startup-animation=none
+animation=none
+close-animation=none
+focus-animation=none
+[output]
+name=Virtual-1
+mode=320x240
+CONFIG
+if [ -x /root/opengpu_gtk_smoke_build.sh ] && [ -f /root/gtk_opengpu_smoke.c ]; then
+    /root/opengpu_gtk_smoke_build.sh >/tmp/opengpu-gtk-build.log 2>&1 || true
+    cat /tmp/opengpu-gtk-build.log >&2 || true
+fi
+weston --config=/tmp/opengpu-weston.ini --backend=drm-backend.so --tty=1 --socket=opengpu-gl >/tmp/opengpu-weston.log 2>&1 &
+weston_pid=$!
+tail -n +1 -f /tmp/opengpu-weston.log >/dev/ttyAMA0 2>&1 &
+weston_tail_pid=$!
+for _ in $(seq 1 60); do
+    [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
+    kill -0 "$weston_pid" 2>/dev/null || exit 1
+    sleep 1
+done
+if [ -x /root/opengpu_gtk_smoke.bin ]; then
+    OPENGPU_GTK_AUTOTEST=1 /root/opengpu_gtk_smoke.bin >/tmp/opengpu-gtk-client.log 2>&1 &
+    gtk_log_pid=$!
+    tail -n +1 -f /tmp/opengpu-gtk-client.log >/dev/ttyAMA0 2>&1 &
+    gtk_tail_pid=$!
+    trap 'kill "$gtk_log_pid" "$gtk_tail_pid" "$weston_tail_pid" "$weston_pid" 2>/dev/null || true' EXIT
+fi
+wait "$weston_pid"
 WESTON_SCRIPT
     chmod +x "$STAGE/opengpu_weston.sh"
 fi
@@ -344,7 +380,9 @@ if [ -n "$expected" ]; then
         [ -r "$cmd" ] || continue
         running="$(tr '\0' ' ' < "$cmd" 2>/dev/null || true)"
         running="${running% }"
-        if [ "$running" = "$expected" ]; then
+        if [ "$running" = "$expected" ] ||
+           [ "$running" = "/bin/sh $expected" ] ||
+           [ "$running" = "/usr/bin/sh $expected" ]; then
             echo "opengpu-boot-display already running the requested client"
             exit 0
         fi
