@@ -292,6 +292,7 @@ printf '%s\n' "${LOAD_ORDER[@]+"${LOAD_ORDER[@]}"}" > "$STAGE/arti_driver_load_o
 echo "  load order: $(IFS=' -> '; echo "${LOAD_ORDER[*]-}")"
 rm -f "$MODULES_ISO"
 if [ "$OPENGPU_AUTO_DISPLAY" = "weston" ]; then
+    WESTON_MODE="${GPU_WIDTH:-640}x${GPU_HEIGHT:-480}"
     cat > "$STAGE/opengpu_weston.sh" <<'WESTON_SCRIPT'
 #!/bin/sh
 set -eu
@@ -316,7 +317,7 @@ close-animation=none
 focus-animation=none
 [output]
 name=Virtual-1
-mode=320x240
+mode=@WESTON_MODE@
 CONFIG
 if [ -x /root/opengpu_gtk_smoke_build.sh ] && [ -f /root/gtk_opengpu_smoke.c ]; then
     /root/opengpu_gtk_smoke_build.sh >/tmp/opengpu-gtk-build.log 2>&1 || true
@@ -340,6 +341,7 @@ if [ -x /root/opengpu_gtk_smoke.bin ]; then
 fi
 wait "$weston_pid"
 WESTON_SCRIPT
+    sed -i "s/@WESTON_MODE@/$WESTON_MODE/" "$STAGE/opengpu_weston.sh"
     chmod +x "$STAGE/opengpu_weston.sh"
 fi
 xorriso -as mkisofs -V OPENGPU -J -r -o "$MODULES_ISO" "$STAGE" 2>&1 | tail -2
