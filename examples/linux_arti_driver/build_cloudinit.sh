@@ -341,7 +341,13 @@ if [ -x /root/opengpu_gtk_smoke.bin ]; then
 fi
 wait "$weston_pid"
 WESTON_SCRIPT
-    sed -i "s/@WESTON_MODE@/$WESTON_MODE/" "$STAGE/opengpu_weston.sh"
+    python3 - "$STAGE/opengpu_weston.sh" "$WESTON_MODE" <<'PY'
+import pathlib
+import sys
+
+script = pathlib.Path(sys.argv[1])
+script.write_text(script.read_text().replace("@WESTON_MODE@", sys.argv[2]))
+PY
     chmod +x "$STAGE/opengpu_weston.sh"
 fi
 xorriso -as mkisofs -V OPENGPU -J -r -o "$MODULES_ISO" "$STAGE" 2>&1 | tail -2
