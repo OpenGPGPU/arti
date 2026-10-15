@@ -161,7 +161,7 @@ class FrameworkTest(unittest.TestCase):
             self.assertIn("ARTI_REFRESH_NS", stub)
             self.assertIn("s->scanout_enable", stub)
             self.assertIn("arti_refresh_timer", stub)
-            self.assertIn("qemu_console_hw_update", stub)
+            self.assertIn("arti_gfx_update(s);", stub)
             self.assertIn("arti_dump_scanout_ppm", stub)
             self.assertIn("ARTI_DISPLAY_DUMP", stub)
             self.assertIn("s->scanout_addr", stub)
