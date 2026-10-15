@@ -202,7 +202,8 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gtk_smoke_build.sh \
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
-                libdrm.so.2 libexpat.so.1; do
+                libdrm.so.2 libexpat.so.1 \
+                libgdk-3.so.0 gtk-gles-readback.json; do
         path="$USERSPACE_DIR/$name"
         [ -f "$path" ] || continue
         cp "$path" "$STAGE/$name"
