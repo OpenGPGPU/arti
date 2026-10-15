@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/driver_preflight.sh"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 arti_load_integration_config || { echo "FAIL: cannot load integration config"; exit 1; }
-CI_DIR="$SCRIPT_DIR/cloud-init"
+CI_TEMPLATE_DIR="$SCRIPT_DIR/cloud-init"
 KO="${KO:-$SCRIPT_DIR/arti_rtl_test.ko}"
 GPU_KO="${GPU_KO:-$SCRIPT_DIR/arti_gpu_probe.ko}"
 DRM_KO="${DRM_KO:-$SCRIPT_DIR/arti_gpu_drm.ko}"
@@ -420,6 +420,12 @@ else
     display_service=$'      Type=oneshot\n      RemainAfterExit=yes\n      ExecStart=/root/load_opengpu.sh'
 fi
 
+# Build each seed privately. Concurrent guests must not rewrite tracked
+# templates or read another build's instance ID/user-data.
+CI_DIR="$STAGE/cidata"
+mkdir -p "$CI_DIR"
+cp "$CI_TEMPLATE_DIR/network-config" "$CI_DIR/network-config"
+
 cat > "$CI_DIR/user-data" <<EOF
 #cloud-config
 disable_root: false
@@ -522,7 +528,7 @@ python3 - <<PY
 from pathlib import Path
 import time
 meta = Path(r"$CI_DIR") / "meta-data"
-meta.write_text("instance-id: arti-dev-%d\nlocal-hostname: arti-dev\n" % int(time.time()))
+meta.write_text("instance-id: arti-dev-%d\nlocal-hostname: arti-dev\n" % time.time_ns())
 print("  meta-data:", meta.read_text().strip())
 PY
 
