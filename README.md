@@ -830,6 +830,22 @@ full Debian rootfs:
 ./examples/linux_arti_driver/run_debian.sh
 ```
 
+CPU execution defaults to TCG with `cortex-a53`. On Apple Silicon,
+`QEMU_ACCEL=hvf` selects Hypervisor.Framework and defaults `QEMU_CPU` to `host`.
+`QEMU_CPU` can also select an explicit CPU model. HVF runs the guest CPU in
+hardware while the embedded RTL model serves the device.
+
+For the GPU integration's bounded model loops, a tested configuration is:
+
+```bash
+QEMU_ACCEL=hvf ARTI_MODEL_IRQ_PUMP=1024 ARTI_MODEL_IRQ_PUMP_NS=8000000 \
+ARTI_MODEL_SETTLE_NS=8000000 ../gpu/scripts/run_arti_debian.sh
+```
+
+This configuration passes native GLES pixel checks and the GTK/scanout proof
+on the 640x480 model with GTK in a 64x64 mode. IRQ chunk size affects active
+model throughput, so select CPU acceleration and model budgets together.
+
 Features:
 
 - Debian 12 (bookworm) ARM64, 10GB persistent qcow2 disk

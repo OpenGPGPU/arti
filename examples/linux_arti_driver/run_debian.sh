@@ -17,6 +17,11 @@ arti_load_integration_config || { echo "FAIL: cannot load integration config"; e
 
 ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
 QEMU="${QEMU:-$ARTI_WORK/qemu-arti-build/qemu-system-aarch64}"
+QEMU_ACCEL="${QEMU_ACCEL:-tcg}"
+case "${QEMU_ACCEL%%,*}" in
+    hvf) QEMU_CPU="${QEMU_CPU:-host}" ;;
+    *) QEMU_CPU="${QEMU_CPU:-cortex-a53}" ;;
+esac
 KERNEL="${KERNEL:-$ARTI_WORK/arti-linux-build/arch/arm64/boot/Image}"
 DISK="${DISK:-$ARTI_WORK/arti-dev.qcow2}"
 CIDATA="${CIDATA:-$ARTI_WORK/cloud-init.iso}"
@@ -189,10 +194,11 @@ esac
 # Replace this script so QEMU stays in the terminal's foreground process
 # group. A timeout(1) parent calls setpgid and backgrounds QEMU, which
 # stops the Cocoa window on SIGTTIN.
+echo "QEMU accelerator=$QEMU_ACCEL cpu=$QEMU_CPU"
 exec "$QEMU" \
   "${QEMU_ARGS[@]+"${QEMU_ARGS[@]}"}" \
   "${QMP_ARGS[@]+"${QMP_ARGS[@]}"}" \
-  -machine virt -cpu cortex-a53 -m 1G -smp 2 \
+  -machine virt -accel "$QEMU_ACCEL" -cpu "$QEMU_CPU" -m 1G -smp 2 \
   "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" \
   "${SERIAL_ARGS[@]+"${SERIAL_ARGS[@]}"}" \
   -global virtio-mmio.force-legacy=false \
