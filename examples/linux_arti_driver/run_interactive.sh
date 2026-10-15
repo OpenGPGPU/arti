@@ -12,6 +12,11 @@ ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 ARTI_WORK="${ARTI_WORK:-$(arti_default_work_dir)}"
 
 QEMU="${QEMU:-$ARTI_WORK/qemu-arti-build/qemu-system-aarch64}"
+QEMU_ACCEL="${QEMU_ACCEL:-tcg}"
+case "${QEMU_ACCEL%%,*}" in
+    hvf|kvm) QEMU_CPU="${QEMU_CPU:-host}" ;;
+    *)       QEMU_CPU="${QEMU_CPU:-cortex-a53}" ;;
+esac
 KERNEL="${KERNEL:-$ARTI_WORK/arti-linux-build/arch/arm64/boot/Image}"
 ROOTFS="${ROOTFS:-$ARTI_WORK/arti-alpine.cpio.gz}"
 
@@ -26,7 +31,7 @@ echo "  Exit:     poweroff -f  or  Ctrl+A then X"
 echo ""
 
 exec "$QEMU" \
-  -machine virt -cpu cortex-a53 -m 512M \
+  -machine virt -accel "$QEMU_ACCEL" -cpu "$QEMU_CPU" -m 512M \
   -display none -monitor none -serial stdio \
   -kernel "$KERNEL" \
   -initrd "$ROOTFS" \

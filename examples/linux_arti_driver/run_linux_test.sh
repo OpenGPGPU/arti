@@ -32,6 +32,13 @@ if [ -z "$QEMU_FW_DIR" ]; then
         fi
     done
 fi
+# Guest CPU/accelerator. Defaults stay TCG/cortex-a53 so the test is portable;
+# callers on Apple Silicon can pass QEMU_ACCEL=hvf to run natively.
+QEMU_ACCEL="${QEMU_ACCEL:-tcg}"
+case "${QEMU_ACCEL%%,*}" in
+    hvf|kvm) QEMU_CPU="${QEMU_CPU:-host}" ;;
+    *)       QEMU_CPU="${QEMU_CPU:-cortex-a53}" ;;
+esac
 LINUX_BUILD="${LINUX_BUILD:-$ARTI_WORK/arti-linux-build}"
 KERNEL="${KERNEL:-$LINUX_BUILD/arch/arm64/boot/Image}"
 WORK="${WORK:-$ARTI_WORK/linux-test}"
@@ -213,7 +220,7 @@ echo "--- launching QEMU (timeout ${TIMEOUT}s, no external cosim) ---"
 rm -f "$SERIAL_LOG"
 set +e
 "$TIMEOUT_BIN" "$TIMEOUT" "$QEMU" \
-    -machine virt -cpu cortex-a53 -m 512M \
+    -machine virt -accel "$QEMU_ACCEL" -cpu "$QEMU_CPU" -m 512M \
     ${QEMU_FW_DIR:+-L "$QEMU_FW_DIR"} \
     -display "$QEMU_DISPLAY" -monitor none \
     -serial file:"$SERIAL_LOG" \
