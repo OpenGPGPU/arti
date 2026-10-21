@@ -203,6 +203,7 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_dri.so \
                 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libglapi.so.0 \
                 libdrm.so.2 libexpat.so.1 \
+                libwayland-client.so.0 libwayland-server.so.0 libffi.so.8 \
                 libgdk-3.so.0 gtk-gles-readback.json \
                 opengpu_private_depth_test; do
         path="$USERSPACE_DIR/$name"
