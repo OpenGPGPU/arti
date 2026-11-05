@@ -43,6 +43,14 @@ class AxiMemoryTest(unittest.TestCase):
             wrong = [Port(p.name, p.direction, 1 if p.name == field else p.width) for p in ports]
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'do not match'):
                 _memory_bridge_for_axi4(ModuleSignature('Wrong', wrong))
+        for field, width, direction in (('mem_awid', 65, 'output'),
+                                        ('mem_awid', 0, 'output'),
+                                        ('mem_awid', 6, 'input'),
+                                        ('mem_bid', 6, 'output')):
+            wrong = [Port(p.name, direction, width) if p.name == field else p for p in ports]
+            with self.subTest(field=field, width=width, direction=direction), \
+                    self.assertRaisesRegex(ValueError, '1..64-bit widths'):
+                _memory_bridge_for_axi4(ModuleSignature('WrongId', wrong))
 
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler unavailable')
     def test_generated_responder_full_width_bursts_and_faults(self):

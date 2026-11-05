@@ -213,6 +213,12 @@ def _memory_bridge_for_axi4(signature):
             ids = [prefix + suffix in ports for suffix in ("awid", "bid", "arid", "rid")]
             if any(ids) and not all(ids):
                 raise ValueError("AXI memory master IDs must be present on all four channels")
+            if all(ids) and any(
+                    not 1 <= ports[prefix + suffix].width <= 64 or
+                    ports[prefix + suffix].direction != direction
+                    for suffix, direction in (("awid", "output"), ("bid", "input"),
+                                              ("arid", "output"), ("rid", "input"))):
+                raise ValueError("AXI memory master IDs require expected directions and 1..64-bit widths")
             if all(ids) and any(ports[prefix + a].width != ports[prefix + b].width
                                 for a, b in (("awid", "bid"), ("arid", "rid"))):
                 raise ValueError("AXI memory master request/response ID widths do not match")
