@@ -53,6 +53,130 @@ def _irq_check_func(interrupts):
     return "\n".join(lines) + "\n"
 
 
+def _axi_master_memory_parts(prefix, signal, data_width, ports):
+    """Byte arrays preserve every Verilator wide word and callback strobe.
+
+    Keep memory data independent of the scalar MMIO C ABI. AXI4 has no WID;
+    accepted W beats queue independently and are consumed by one active AW.
+    """
+    ident = "".join(c if c.isalnum() or c == "_" else "_"
+                    for c in prefix.removeprefix("io_").rstrip("_"))
+    n = data_width // 8
+    q = "g_" + ident
+    has_ids = prefix + "awid" in ports
+    awid, arid = (f"g_rtl->{prefix}{name}" if has_ids else "0"
+                  for name in ("awid", "arid"))
+    awburst, arburst = (f"g_rtl->{prefix}{name}" if prefix + name in ports else "1"
+                        for name in ("awburst", "arburst"))
+    glob = [
+        f"struct ArtiAxiWriteBeat_{ident} {{ uint8_t data[{n}]; uint64_t strb; bool last; }};",
+        f"struct ArtiAxiWriteResp_{ident} {{ uint64_t id; uint8_t resp; }};",
+        f"struct ArtiAxiReadBeat_{ident} {{ uint8_t data[{n}]; uint64_t id; uint8_t resp; bool last; }};",
+        f"static std::deque<ArtiAxiWriteBeat_{ident}> {q}_wbeats;",
+        f"static std::deque<ArtiAxiWriteResp_{ident}> {q}_bresp;",
+        f"static std::deque<ArtiAxiReadBeat_{ident}> {q}_rresp;",
+        f"static bool {q}_aw_active;",
+        f"static uint64_t {q}_aw_addr, {q}_aw_id;",
+        f"static unsigned {q}_aw_size, {q}_aw_beat, {q}_aw_beats, {q}_aw_burst;",
+        f"static int {q}_write_status;",
+    ]
+    drive = [
+        f"    g_rtl->{signal['awready']} = !{q}_aw_active && {q}_bresp.size() < 16;",
+        f"    g_rtl->{signal['wready']} = {q}_wbeats.size() < 256;",
+        f"    g_rtl->{signal['arready']} = {q}_rresp.size() < 256;",
+        f"    g_rtl->{signal['bvalid']} = !{q}_bresp.empty();",
+        f"    g_rtl->{signal['bresp']} = {q}_bresp.empty() ? 0 : {q}_bresp.front().resp;",
+        f"    g_rtl->{signal['rvalid']} = !{q}_rresp.empty();",
+        f"    g_rtl->{signal['rresp']} = {q}_rresp.empty() ? 0 : {q}_rresp.front().resp;",
+        f"    g_rtl->{signal['rlast']} = !{q}_rresp.empty() && {q}_rresp.front().last;",
+    ]
+    if has_ids:
+        drive.extend([
+            f"    g_rtl->{prefix}bid = {q}_bresp.empty() ? 0 : {q}_bresp.front().id;",
+            f"    g_rtl->{prefix}rid = {q}_rresp.empty() ? 0 : {q}_rresp.front().id;",
+        ])
+    # Verilator uses a scalar through64 bits and indexed32-bit words above it.
+    if data_width <= 64:
+        drive.extend([
+            "    { uint64_t data = 0;",
+            f"      if (!{q}_rresp.empty()) for (unsigned i=0; i<{n}; ++i)",
+            f"          data |= (uint64_t){q}_rresp.front().data[i] << (8*i);",
+            f"      g_rtl->{signal['rdata']} = data; }}",
+        ])
+        byte = f"(uint8_t)((uint64_t)g_rtl->{signal['wdata']} >> (8*i))"
+    else:
+        drive.extend([
+            f"    for (unsigned w=0; w<{n // 4}; ++w) {{",
+            "        uint32_t data = 0;",
+            f"        if (!{q}_rresp.empty()) for (unsigned b=0; b<4; ++b)",
+            f"            data |= (uint32_t){q}_rresp.front().data[4*w+b] << (8*b);",
+            f"        g_rtl->{signal['rdata']}[w] = data;",
+            "    }",
+        ])
+        byte = f"(uint8_t)(g_rtl->{signal['wdata']}[i/4] >> (8*(i%4)))"
+    capture = f"""
+    if (!{q}_bresp.empty() && g_rtl->{signal['bready']}) {q}_bresp.pop_front();
+    if (!{q}_rresp.empty() && g_rtl->{signal['rready']}) {q}_rresp.pop_front();
+    if (g_rtl->{signal['awvalid']} && g_rtl->{signal['awready']}) {{
+        {q}_aw_active = true;
+        {q}_aw_addr = g_rtl->{signal['awaddr']}; {q}_aw_id = {awid};
+        unsigned log_size = g_rtl->{signal['awsize']};
+        {q}_aw_size = log_size <= 6 ? 1u << log_size : 0;
+        {q}_aw_beat = 0; {q}_aw_beats = 1u + g_rtl->{signal['awlen']};
+        {q}_aw_burst = {awburst};
+        {q}_write_status = !{q}_aw_size || {q}_aw_size > {n} || {q}_aw_burst > 1 ? -1 : 0;
+    }}
+    if (g_rtl->{signal['wvalid']} && g_rtl->{signal['wready']}) {{
+        ArtiAxiWriteBeat_{ident} w = {{}};
+        for (unsigned i=0; i<{n}; ++i) w.data[i] = {byte};
+        w.strb = g_rtl->{signal['wstrb']}; w.last = g_rtl->{signal['wlast']};
+        {q}_wbeats.push_back(w);
+    }}
+    if ({q}_aw_active && !{q}_wbeats.empty()) {{
+        auto w = {q}_wbeats.front(); {q}_wbeats.pop_front();
+        bool last = {q}_aw_beat + 1 == {q}_aw_beats;
+        if (w.last != last) {q}_write_status = -1;
+        if ({q}_aw_size && {q}_aw_size <= {n} && {q}_aw_burst <= 1) {{
+            uint64_t addr = {q}_aw_addr;
+            if ({q}_aw_burst && {q}_aw_beat)
+                addr = (addr & ~((uint64_t){q}_aw_size-1)) + (uint64_t){q}_aw_beat * {q}_aw_size;
+            unsigned lane = addr & {n-1};
+            unsigned size = {q}_aw_size - (addr & ({q}_aw_size-1));
+            uint64_t mask = w.strb >> lane;
+            if (size < 64) mask &= (UINT64_C(1) << size)-1;
+            int status = mask ? (g_mem_write_cb ? g_mem_write_cb(addr, w.data+lane, size, mask, {q}_aw_id) : -1) : 0;
+            if (status) {q}_write_status = status;
+            if (g_arti_debug == 1 && mask) fprintf(stderr, "[artidbg] AXI-W {ident} addr=0x%llx size=%u mask=0x%llx id=%llu\\n", (unsigned long long)addr, size, (unsigned long long)mask, (unsigned long long){q}_aw_id);
+        }}
+        {q}_aw_beat++; g_arti_idle = 0;
+        if (last) {{
+            {q}_bresp.push_back({{{q}_aw_id, (uint8_t)({q}_write_status ? 2 : 0)}});
+            {q}_aw_active = false;
+        }}
+    }}
+    if (g_rtl->{signal['arvalid']} && g_rtl->{signal['arready']}) {{
+        uint64_t base = g_rtl->{signal['araddr']}, id = {arid};
+        unsigned log_size = g_rtl->{signal['arsize']};
+        unsigned size = log_size <= 6 ? 1u << log_size : 0;
+        unsigned beats = 1u + g_rtl->{signal['arlen']}, burst = {arburst};
+        for (unsigned beat=0; beat<beats; ++beat) {{
+            ArtiAxiReadBeat_{ident} r = {{}}; r.id=id; r.last=beat+1==beats;
+            int status = -1;
+            if (size && size <= {n} && burst <= 1) {{
+                uint64_t addr = burst && beat ? (base & ~((uint64_t)size-1)) + (uint64_t)beat*size : base;
+                unsigned lane=addr & {n-1}, transfer=size-(addr & (size-1));
+                status = g_mem_read_cb ? g_mem_read_cb(addr, r.data+lane, transfer, id) : -1;
+                if (status) memset(r.data, 0, sizeof(r.data));
+                if (g_arti_debug == 1) fprintf(stderr, "[artidbg] AXI-R {ident} addr=0x%llx size=%u id=%llu\\n", (unsigned long long)addr, transfer, (unsigned long long)id);
+            }}
+            r.resp = status ? 2 : 0; {q}_rresp.push_back(r);
+        }}
+        g_arti_idle = 0;
+    }}
+""".strip("\n").splitlines()
+    return glob, drive, capture
+
+
 def _memory_bridge_for_axi4(signature):
     """Render memory responders for AXI masters and legacy private clients."""
     names = {p.name for p in signature.ports}
@@ -81,8 +205,20 @@ def _memory_bridge_for_axi4(signature):
                for suffix, direction in master_required.items()
                for signal in (signals[suffix],)):
             data_width = ports[signals["wdata"]].width
-            if data_width <= 64 and data_width % 8 == 0:
-                axi_masters.append((prefix, signals, data_width))
+            if data_width not in (8, 16, 32, 64, 128, 256, 512):
+                raise ValueError("AXI memory master data width must be 8..512 power-of-two bits")
+            if (ports[signals["rdata"]].width != data_width or
+                    ports[signals["wstrb"]].width != data_width // 8):
+                raise ValueError("AXI memory master data/strobe widths do not match")
+            ids = [prefix + suffix in ports for suffix in ("awid", "bid", "arid", "rid")]
+            if any(ids) and not all(ids):
+                raise ValueError("AXI memory master IDs must be present on all four channels")
+            if all(ids) and any(ports[prefix + a].width != ports[prefix + b].width
+                                for a, b in (("awid", "bid"), ("arid", "rid"))):
+                raise ValueError("AXI memory master request/response ID widths do not match")
+            if any(not 1 <= ports[signals[s]].width <= 64 for s in ("awaddr", "araddr")):
+                raise ValueError("AXI memory master addresses must fit the 64-bit callback ABI")
+            axi_masters.append((prefix, signals, data_width))
     word_channels = []
     for prefix in ("io_cbMem", "io_fbMem", "io_texMem"):
         required = {
@@ -125,99 +261,10 @@ def _memory_bridge_for_axi4(signature):
     drive = []
     capture = []
     for prefix, signal, data_width in axi_masters:
-        ident = "".join(c if c.isalnum() or c == "_" else "_"
-                        for c in prefix.removeprefix("io_").rstrip("_"))
-        bus_bytes = data_width // 8
-        awid = prefix + "awid"
-        bid = prefix + "bid"
-        arid = prefix + "arid"
-        rid = prefix + "rid"
-        has_ids = all(name in ports for name in (awid, bid, arid, rid))
-        globals_.extend([
-            f"struct ArtiAxiWriteBeat_{ident} {{ uint64_t data; uint64_t strb; bool last; }};",
-            f"struct ArtiAxiWriteResp_{ident} {{ uint64_t id; uint8_t resp; }};",
-            f"struct ArtiAxiReadBeat_{ident} {{ uint64_t data; uint64_t id; uint8_t resp; bool last; }};",
-            f"static std::deque<ArtiAxiWriteBeat_{ident}> g_{ident}_wbeats;",
-            f"static std::deque<ArtiAxiWriteResp_{ident}> g_{ident}_bresp;",
-            f"static std::deque<ArtiAxiReadBeat_{ident}> g_{ident}_rresp;",
-            f"static bool g_{ident}_aw_active;",
-            f"static uint64_t g_{ident}_aw_addr, g_{ident}_aw_id;",
-            f"static unsigned g_{ident}_aw_size, g_{ident}_aw_beat;",
-            f"static int g_{ident}_write_status;",
-        ])
-        drive.extend([
-            f"    g_rtl->{signal['awready']} = !g_{ident}_aw_active;",
-            f"    g_rtl->{signal['wready']} = 1;",
-            f"    g_rtl->{signal['arready']} = 1;",
-            f"    g_rtl->{signal['bvalid']} = !g_{ident}_bresp.empty();",
-            f"    g_rtl->{signal['bresp']} = g_{ident}_bresp.empty() ? 0 : g_{ident}_bresp.front().resp;",
-        ])
-        if has_ids:
-            drive.append(
-                f"    g_rtl->{bid} = g_{ident}_bresp.empty() ? 0 : g_{ident}_bresp.front().id;")
-        drive.extend([
-            f"    g_rtl->{signal['rvalid']} = !g_{ident}_rresp.empty();",
-            f"    g_rtl->{signal['rdata']} = g_{ident}_rresp.empty() ? 0 : g_{ident}_rresp.front().data;",
-            f"    g_rtl->{signal['rresp']} = g_{ident}_rresp.empty() ? 0 : g_{ident}_rresp.front().resp;",
-            f"    g_rtl->{signal['rlast']} = !g_{ident}_rresp.empty() && g_{ident}_rresp.front().last;",
-        ])
-        if has_ids:
-            drive.append(
-                f"    g_rtl->{rid} = g_{ident}_rresp.empty() ? 0 : g_{ident}_rresp.front().id;")
-        capture.extend([
-            f"    if (!g_{ident}_bresp.empty() && g_rtl->{signal['bready']})",
-            f"        g_{ident}_bresp.pop_front();",
-            f"    if (!g_{ident}_rresp.empty() && g_rtl->{signal['rready']})",
-            f"        g_{ident}_rresp.pop_front();",
-            f"    if (g_rtl->{signal['awvalid']} && g_rtl->{signal['awready']}) {{",
-            f"        g_{ident}_aw_active = true;",
-            f"        g_{ident}_aw_addr = g_rtl->{signal['awaddr']};",
-            f"        g_{ident}_aw_id = " + (f"g_rtl->{awid};" if has_ids else "0;"),
-            f"        g_{ident}_aw_size = 1u << g_rtl->{signal['awsize']};",
-            f"        g_{ident}_aw_beat = 0;",
-            f"        g_{ident}_write_status = 0;",
-            "    }",
-            f"    if (g_rtl->{signal['wvalid']} && g_rtl->{signal['wready']})",
-            f"        g_{ident}_wbeats.push_back({{(uint64_t)g_rtl->{signal['wdata']}, (uint64_t)g_rtl->{signal['wstrb']}, !!g_rtl->{signal['wlast']}}});",
-            f"    if (g_{ident}_aw_active && !g_{ident}_wbeats.empty()) {{",
-            f"        ArtiAxiWriteBeat_{ident} w = g_{ident}_wbeats.front();",
-            f"        g_{ident}_wbeats.pop_front();",
-            f"        uint64_t addr = g_{ident}_aw_addr + (uint64_t)g_{ident}_aw_beat * g_{ident}_aw_size;",
-            f"        unsigned lane = addr & {bus_bytes - 1};",
-            f"        unsigned size = g_{ident}_aw_size;",
-            f"        if (size > {bus_bytes} - lane) size = {bus_bytes} - lane;",
-            f"        uint64_t data = w.data >> (lane * 8);",
-            f"        uint64_t mask = w.strb >> lane;",
-            "        int status = -1;",
-            "        if (g_mem_write_cb)",
-            f"            status = g_mem_write_cb(addr, (const uint8_t *)&data, size, mask, g_{ident}_aw_id);",
-            f"        if (status != 0) g_{ident}_write_status = status;",
-            f'        if (g_arti_debug == 1 && mask) fprintf(stderr, "[artidbg] AXI-W {ident} addr=0x%llx size=%u data=0x%llx mask=0x%llx id=%llu\\n", (unsigned long long)addr, size, (unsigned long long)data, (unsigned long long)mask, (unsigned long long)g_{ident}_aw_id);',
-            f"        g_{ident}_aw_beat++;",
-            "        g_arti_idle = 0;",
-            "        if (w.last) {",
-            f"            g_{ident}_bresp.push_back({{g_{ident}_aw_id, (uint8_t)(g_{ident}_write_status ? 2 : 0)}});",
-            f"            g_{ident}_aw_active = false;",
-            "        }",
-            "    }",
-            f"    if (g_rtl->{signal['arvalid']} && g_rtl->{signal['arready']}) {{",
-            f"        uint64_t base = g_rtl->{signal['araddr']};",
-            f"        uint64_t id = " + (f"g_rtl->{arid};" if has_ids else "0;"),
-            f"        unsigned size = 1u << g_rtl->{signal['arsize']};",
-            f"        unsigned beats = 1u + g_rtl->{signal['arlen']};",
-            "        for (unsigned beat = 0; beat < beats; beat++) {",
-            "            uint64_t addr = base + (uint64_t)beat * size;",
-            f"            unsigned lane = addr & {bus_bytes - 1};",
-            f"            unsigned transfer = size > {bus_bytes} - lane ? {bus_bytes} - lane : size;",
-            "            uint64_t data = 0;",
-            "            int status = g_mem_read_cb ? g_mem_read_cb(addr, (uint8_t *)&data, transfer, id) : -1;",
-            f'            if (g_arti_debug == 1) fprintf(stderr, "[artidbg] AXI-R {ident} addr=0x%llx size=%u data=0x%llx id=%llu\\n", (unsigned long long)addr, transfer, (unsigned long long)data, (unsigned long long)id);',
-            f"            data <<= lane * 8;",
-            f"            g_{ident}_rresp.push_back({{data, id, (uint8_t)(status ? 2 : 0), beat + 1 == beats}});",
-            "        }",
-            "        g_arti_idle = 0;",
-            "    }",
-        ])
+        parts = _axi_master_memory_parts(prefix, signal, data_width, ports)
+        globals_.extend(parts[0])
+        drive.extend(parts[1])
+        capture.extend(parts[2])
     for prefix, word_tagged in word_channels:
         ident = prefix.removeprefix("io_")
         globals_.append(f"static std::deque<ArtiWordResp> g_{ident}_resp;")

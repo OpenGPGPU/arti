@@ -12,6 +12,23 @@
 #   - Cross GCC:     aarch64-linux-gnu-gcc (or aarch64-unknown-linux-gnu-gcc)
 set -euo pipefail
 
+# Explicit qualification options. Keep defaults and pass the extra command
+# line as one argument; never evaluate it as shell code.
+ARTI_GUEST_RAM_MIB="${ARTI_GUEST_RAM_MIB:-512}"
+ARTI_KERNEL_CMDLINE_EXTRA="${ARTI_KERNEL_CMDLINE_EXTRA:-}"
+if [[ ! "$ARTI_GUEST_RAM_MIB" =~ ^[0-9]{1,5}$ ]] ||
+   (( 10#$ARTI_GUEST_RAM_MIB < 64 || 10#$ARTI_GUEST_RAM_MIB > 32768 )); then
+    echo 'FAIL: ARTI_GUEST_RAM_MIB must be an integer between 64 and 32768' >&2
+    exit 2
+fi
+ARTI_GUEST_RAM_MIB=$((10#$ARTI_GUEST_RAM_MIB))
+if (( ${#ARTI_KERNEL_CMDLINE_EXTRA} > 4096 )) ||
+   [[ "$ARTI_KERNEL_CMDLINE_EXTRA" == *[!a-zA-Z0-9_./,:=@+%\ -]* ]]; then
+    echo 'FAIL: ARTI_KERNEL_CMDLINE_EXTRA contains unsupported characters or is too long' >&2
+    exit 2
+fi
+ARTI_KERNEL_CMDLINE="console=ttyAMA0${ARTI_KERNEL_CMDLINE_EXTRA:+ $ARTI_KERNEL_CMDLINE_EXTRA}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ARTI_DIR="${ARTI_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 . "$SCRIPT_DIR/integration_env.sh"
@@ -217,16 +234,17 @@ echo "--- initramfs built ($(wc -c < "$WORK/initramfs.cpio.gz") bytes) ---"
 # 2. Boot QEMU (embedded model — no cosim, no socket needed)
 #    Use -serial file: instead of -nographic to avoid stdio/TTY issues
 echo "--- launching QEMU (timeout ${TIMEOUT}s, no external cosim) ---"
+echo "Guest RAM: ${ARTI_GUEST_RAM_MIB} MiB; kernel command line: $ARTI_KERNEL_CMDLINE"
 rm -f "$SERIAL_LOG"
 set +e
 "$TIMEOUT_BIN" "$TIMEOUT" "$QEMU" \
-    -machine virt -accel "$QEMU_ACCEL" -cpu "$QEMU_CPU" -m 512M \
+    -machine virt -accel "$QEMU_ACCEL" -cpu "$QEMU_CPU" -m "${ARTI_GUEST_RAM_MIB}M" \
     ${QEMU_FW_DIR:+-L "$QEMU_FW_DIR"} \
     -display "$QEMU_DISPLAY" -monitor none \
     -serial file:"$SERIAL_LOG" \
     -kernel "$KERNEL" \
     -initrd "$WORK/initramfs.cpio.gz" \
-    -append "console=ttyAMA0" < /dev/null
+    -append "$ARTI_KERNEL_CMDLINE" < /dev/null
 QEMU_RC=$?
 set -e
 

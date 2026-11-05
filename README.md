@@ -75,6 +75,13 @@ The same example profile is available beside the RTL at
 `examples/arti_gpu/linux_integration.yaml`. Its `source_files` path is relative to that
 file, so it can be copied with `arti_gpu.v` into another GPU project and adapted there.
 
+`run_linux_test.sh` defaults to 512 MiB RAM and `console=ttyAMA0`. Explicit
+qualification runs can set `ARTI_GUEST_RAM_MIB=2048` and
+`ARTI_KERNEL_CMDLINE_EXTRA='cma=768M@0x60000000'`. When supplying an external
+DTB, generate it for the same RAM size and check its RAM/reserved ranges; a
+512 MiB DTB does not become a 2 GiB DTB by changing `-m`. Extra kernel options
+are passed as one argument, never evaluated as shell code.
+
 For a real GPU project, copy the generic profile and change `rtl`, `bridge`, and the
 `integration` fields to match the external RTL and driver. Paths in an integration
 profile are relative to that profile, so a portable project can keep its module and
@@ -191,6 +198,11 @@ examples/linux_arti_driver/run_linux_test.sh
 - SystemC/Verilator AXI-Lite runtime bridge with generated local TLM self-test (local mode)
 - Upstream QEMU SysBus MMIO stub and Unix-socket-to-TLM transport generation
 - Full QEMU embedded mode: Verilated RTL compiled directly into QEMU, no IPC needed
+- Embedded AXI memory-master callbacks preserve 8–512-bit data, every byte
+  strobe, narrow transfers and FIXED/INCR bursts. Unsupported widths and
+  mismatched data/strobe/ID shapes fail generation. Actual generated-C++ tests
+  cover 64/256/512-bit read/write backpressure and faults without an RTL build:
+  `PYTHONPATH=src python3 -m unittest discover -s tests -p test_axi_memory.py -v`.
 
 A successful generated simulation prints `ARTI COSIM PASS`.
 
