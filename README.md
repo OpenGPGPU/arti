@@ -960,6 +960,46 @@ arti generate examples/axi4_periph/config.yaml --output /tmp/axi4_project
 arti generate examples/ahb_gpio/config.yaml --output /tmp/ahb_project
 ```
 
+#### Embedded AXI control writes
+
+The AXI4 and AXI-Lite C APIs keep their existing signatures. A write tracks
+AW and W independently: each VALID is withdrawn only after its own accepted
+edge. Handshakes and BRESP are captured after low-clock evaluation, before the
+rising edge, so READY depending on VALID or dropping after the accepted edge
+does not lose an acceptance. Only a completed OKAY B response returns 0;
+SLVERR/DECERR or request/response timeout return -1. A completed error response
+leaves the bus available for a subsequent transaction.
+
+A timed-out split write cannot be canceled through this API. The generated
+model preserves unaccepted offers and freezes its clock; later MMIO reads and
+writes return -1 without changing pins, and IRQ polling returns 0. Recreate
+the model process to recover. This avoids silently withdrawing an irrevocable
+offer or attributing a late reply to another call. Other read error/timeout
+handling is unchanged. The current QEMU write callback ignores the C return
+value, so this is not a claim that guest MMIO writes receive an errno or bus
+exception; failures are also logged on stderr.
+
+CPU-only regression compiles the actual generated wrappers against a small
+pin target. It covers 32-/64-bit buses with 32-bit MMIO writes, simultaneous,
+AW-first, W-first and delayed acceptance, stable held offers, post-edge READY
+and BRESP changes, completed error recovery, and AW/W/B timeouts with refusal
+of reuse. GCC `-O2 -Wall -Wextra -Werror` and ASan/UBSan pass all 40 cases:
+
+```sh
+PYTHONPATH=src python3 -m unittest discover -s tests -p test_axi_control.py -v
+ARTI_CPU_SANITIZE=1 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 PYTHONPATH=src \
+  python3 -m unittest discover -s tests -p test_axi_control.py -v
+```
+
+Set `ARTI_CPU_EVIDENCE` to a new directory to retain generated C++, dependency
+files and logs. These checks build no RTL, model or Linux guest. The older
+failure was reproduced with one accepted AW/W/B but two withdrawn stalled
+offers in AW-first mode; it returned 0 after waiting out the request timeout.
+It also returned 0 for SLVERR. Register-only preambles now define their own
+idle/debug counters and use the actual optional IRQ name, so this CPU check
+does not supply missing runtime globals or a fictitious IRQ pin.
+
 #### Automatic interrupt support
 
 If the RTL has interrupt output ports (port names matching patterns such as `irq`,
