@@ -171,6 +171,9 @@ if [ -n "$USERSPACE_DIR" ]; then
                 opengpu_gl_texture opengpu_gl_texture.bin \
                 opengpu_gl_blend opengpu_gl_blend.bin \
                 opengpu_gl_scissor opengpu_gl_scissor.bin \
+                opengpu_gl_depth_stencil.bin \
+                opengpu_gl_primitive_restart.bin \
+                opengpu_gl_framebuffer_blit.bin \
                 opengpu_gl_transform opengpu_gl_transform.bin \
                 opengpu_gl_textransform opengpu_gl_textransform.bin \
                 opengpu_gl_modulate opengpu_gl_modulate.bin \
