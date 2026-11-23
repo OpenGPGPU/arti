@@ -89,18 +89,22 @@ for cand in \
 done
 [ -z "$DRM_TEST" ] || echo "  test     : $DRM_TEST"
 
-USERSPACE_DIR=""
-for cand in \
-    "${OPENGPU_USERSPACE_DIR:-}" \
-    "${DRIVER_KO:+$(dirname "$DRIVER_KO")}" \
-    "$ARTI_WORK/opengpu-driver"; do
-    [ -n "$cand" ] && [ -d "$cand" ] || continue
-    if compgen -G "$cand/opengpu_pipe_*" >/dev/null 2>&1 || \
-       [ -f "$cand/opengpu_triangle_example" ]; then
-        USERSPACE_DIR="$cand"
-        break
-    fi
-done
+USERSPACE_DIR="${OPENGPU_USERSPACE_DIR:-}"
+if [ -n "$USERSPACE_DIR" ]; then
+    [ -d "$USERSPACE_DIR" ] || {
+        echo "FAIL: explicit OpenGPU userspace directory not found: $USERSPACE_DIR" >&2
+        exit 1
+    }
+else
+    for cand in "${DRIVER_KO:+$(dirname "$DRIVER_KO")}" "$ARTI_WORK/opengpu-driver"; do
+        [ -n "$cand" ] && [ -d "$cand" ] || continue
+        if compgen -G "$cand/opengpu_pipe_*" >/dev/null 2>&1 || \
+           [ -f "$cand/opengpu_triangle_example" ]; then
+            USERSPACE_DIR="$cand"
+            break
+        fi
+    done
+fi
 [ -z "$USERSPACE_DIR" ] || echo "  userspace: $USERSPACE_DIR"
 OPENGPU_AUTO_DISPLAY="${OPENGPU_AUTO_DISPLAY:-0}"
 case "$OPENGPU_AUTO_DISPLAY" in
